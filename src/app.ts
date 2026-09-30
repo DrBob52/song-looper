@@ -14,6 +14,7 @@ import {
   planKey,
 } from './audio/render';
 import { RenderClient, SupersededError } from './audio/renderClient';
+import { solveRepeats } from './audio/target';
 import { downloadBlob, estimateWavSize } from './audio/wav';
 import { barsBetween, emptyGrid, makeGrid, snapTime } from './grid';
 import type { Grid } from './grid';
@@ -25,11 +26,14 @@ import { Dropzone } from './ui/dropzone';
 import { h } from './ui/dom';
 import { ExportDialog } from './ui/exportDialog';
 import { LengthPanel } from './ui/lengthPanel';
+import type { LengthMode } from './ui/lengthPanel';
 import { RegionsPanel } from './ui/regionsPanel';
 import { SuggestionsPanel, suggestionKey } from './ui/suggestionsPanel';
+import { TimelineStrip } from './ui/timelineStrip';
 import { Transport } from './ui/transport';
 import type { PlayMode } from './ui/transport';
 import { SELECTION_ID, WaveformView } from './ui/waveform';
+import { formatTime } from './util/time';
 import { createStore } from './util/store';
 
 export interface AppState {
@@ -48,6 +52,9 @@ export interface AppState {
   analysis: Analysis | null;
   analysisState: 'idle' | 'running' | 'done' | 'error';
   grid: Grid;
+  lengthMode: LengthMode;
+  /** Target extended length in seconds (used in target mode). */
+  targetSeconds: number;
 }
 
 /** Overall analysis progress (0..1) from a stage and the progress within it. */
@@ -88,12 +95,15 @@ export class App {
     analysis: null,
     analysisState: 'idle',
     grid: emptyGrid(),
+    lengthMode: 'repeats',
+    targetSeconds: 0,
   });
   readonly player = new Player();
   private renderClient = new RenderClient();
   private analysisClient = new AnalysisClient();
   private analysisControls: AnalysisControls;
   private suggestionsPanel: SuggestionsPanel;
+  private timelineStrip: TimelineStrip;
   private dropzone: Dropzone;
   private transport: Transport;
   private regionsPanel: RegionsPanel;
@@ -146,7 +156,12 @@ export class App {
         this.waveform?.setHighlight(c ? { start: c.start, end: c.end } : null);
       },
     });
-    this.lengthPanel = new LengthPanel();
+    this.lengthPanel = new LengthPanel({
+      onMode: (m) => this.setLengthMode(m),
+      onTarget: (sec) => this.setTarget(sec),
+      onSeamMs: (ms) => this.store.set({ seamMs: ms }),
+    });
+    this.timelineStrip = new TimelineStrip((t) => void this.seekExtended(t));
     this.exportDialog = new ExportDialog({ onExport: (o) => this.doExport(o), onCancel: () => undefined });
     this.waveHost = h('div', { class: 'wave-host', attrs: { 'data-testid': 'waveform' } });
     this.noticeEl = h('div', { class: 'notice', attrs: { role: 'status', 'data-testid': 'notice' } });
@@ -180,6 +195,7 @@ export class App {
         this.suggestionsPanel.el,
         this.regionsPanel.el,
         this.lengthPanel.el,
+        this.timelineStrip.el,
       ],
     );
 
@@ -221,12 +237,14 @@ export class App {
       s.selectedId !== prev.selectedId ||
       s.previewingId !== prev.previewingId ||
       s.song !== prev.song ||
-      s.grid !== prev.grid
+      s.grid !== prev.grid ||
+      s.lengthMode !== prev.lengthMode
     ) {
       this.regionsPanel.update(s.regions, s.selectedId, {
         barsOf: (r) => barsBetween(s.grid, r.start, r.end),
         hasGrid: s.grid.beats.length > 0,
         previewingId: s.previewingId,
+        repeatsLocked: s.lengthMode === 'target',
       });
     }
     if (s.grid !== prev.grid || s.analysis !== prev.analysis) {
@@ -260,21 +278,55 @@ export class App {
     if (s.renderState !== prev.renderState) {
       this.transport.setStatus(s.renderState === 'rendering' ? 'Rendering…' : s.renderState === 'error' ? 'Render failed' : '');
     }
-    if (regionsChanged || s.song !== prev.song || s.seamMs !== prev.seamMs) {
+    if (
+      regionsChanged ||
+      s.song !== prev.song ||
+      s.seamMs !== prev.seamMs ||
+      s.lengthMode !== prev.lengthMode ||
+      s.targetSeconds !== prev.targetSeconds
+    ) {
       if (s.song) this.timeline = buildTimeline(this.plan(), s.song.duration);
       this.updateLength();
+      this.timelineStrip.update(this.timeline, s.regions);
       this.onPlanChanged(regionsChanged || s.seamMs !== prev.seamMs);
     }
   }
 
   private updateLength(): void {
-    const { song } = this.store.get();
+    const { song, lengthMode, targetSeconds, seamMs, regions } = this.store.get();
     if (!song) return;
     const ext = extendedDuration(this.plan(), song.duration);
     let note = '';
-    if (ext > MAX_EXTENDED_SECONDS) note = `Too long: the limit is ${MAX_EXTENDED_SECONDS / 60} minutes. Lower a repeat count.`;
-    else if (ext > 20 * 60) note = 'That is a long file. Rendering may be slow.';
-    this.lengthPanel.update(song.duration, ext, note);
+    let noteKind: 'info' | 'warn' = 'info';
+    if (ext > MAX_EXTENDED_SECONDS) {
+      note = `Too long: the limit is ${MAX_EXTENDED_SECONDS / 60} minutes. Lower a repeat count.`;
+      noteKind = 'warn';
+    } else if (lengthMode === 'target') {
+      if (regions.length === 0) {
+        note = 'Add a loop first; the target length is spread across your loops.';
+      } else if (targetSeconds <= song.duration) {
+        note = 'The target is not longer than the song, so nothing repeats.';
+      } else {
+        const diff = ext - targetSeconds;
+        note =
+          Math.abs(diff) < 0.05
+            ? `Hits the target: ${formatTime(ext, 1)}.`
+            : `Closest whole repeats: ${formatTime(ext, 1)} (${diff > 0 ? '+' : '\u2212'}${Math.abs(diff).toFixed(1)} s from the target).`;
+        if (regions.every((r) => r.repeats >= 64) && diff < -0.05) noteKind = 'warn';
+      }
+    } else if (ext > 20 * 60) {
+      note = 'That is a long file. Rendering may be slow.';
+    }
+    this.lengthPanel.update({
+      mode: lengthMode,
+      targetSeconds,
+      originalSeconds: song.duration,
+      extendedSeconds: ext,
+      seamMs,
+      note,
+      noteKind,
+      hasRegions: regions.length > 0,
+    });
   }
 
   private onPlanChanged(contentChanged: boolean): void {
@@ -375,6 +427,8 @@ export class App {
       analysis: null,
       analysisState: 'idle',
       grid: emptyGrid(),
+      lengthMode: 'repeats',
+      targetSeconds: Math.ceil(song.duration),
     });
     this.dropzone.showFile(song);
     this.songPanel.hidden = false;
@@ -469,6 +523,46 @@ export class App {
     return this.store.get().playMode === 'extended' ? extendedToOriginal(this.timeline, t).time : t;
   }
 
+  /** Set the regions, computing repeat counts from the target length when in target mode. */
+  private commitRegions(regions: LoopRegion[], extra: Partial<AppState> = {}): void {
+    const { song, lengthMode, targetSeconds } = this.store.get();
+    let next = sortRegions(regions);
+    if (song && lengthMode === 'target' && next.length > 0) {
+      const res = solveRepeats(next, song.duration, targetSeconds);
+      next = next.map((r, i) => (r.repeats === res.repeats[i] ? r : { ...r, repeats: res.repeats[i]! }));
+    }
+    this.store.set({ regions: next, ...extra });
+  }
+
+  setLengthMode(mode: LengthMode): void {
+    const { song, lengthMode, regions } = this.store.get();
+    if (!song || mode === lengthMode) return;
+    if (mode === 'target') {
+      const ext = extendedDuration(this.plan(), song.duration);
+      this.store.set({ lengthMode: mode, targetSeconds: Math.max(Math.round(ext), Math.ceil(song.duration)) });
+    } else {
+      this.store.set({ lengthMode: mode });
+    }
+    this.commitRegions(regions);
+  }
+
+  setTarget(seconds: number): void {
+    this.store.set({ targetSeconds: seconds });
+    this.commitRegions(this.store.get().regions);
+  }
+
+  /** Seek the extended preview (switching to it if needed). */
+  async seekExtended(t: number): Promise<void> {
+    if (!this.store.get().song) return;
+    if (this.store.get().playMode !== 'extended') {
+      await this.setPlayMode('extended');
+      if (this.store.get().playMode !== 'extended') return;
+    }
+    if (this.player.isAuxPlaying()) this.stopAux();
+    this.player.seek(t);
+    this.renderTime();
+  }
+
   addLoop(span?: Span, extra: Partial<LoopRegion> = {}): string | null {
     const { song, regions, selection } = this.store.get();
     if (!song) return null;
@@ -498,7 +592,7 @@ export class App {
       snapToBars: true,
       ...extra,
     };
-    this.store.set({ regions: sortRegions([...regions, region]), selectedId: id, selection: null });
+    this.commitRegions([...regions, region], { selectedId: id, selection: null });
     return id;
   }
 
@@ -512,17 +606,18 @@ export class App {
       const fit = fitSpan(regions, { start: next.start, end: next.end }, song.duration, MIN_REGION_SECONDS, id);
       if (!fit) {
         // Refuse: snap the view back to the model.
-        this.store.set({ regions: [...regions] });
+        this.commitRegions([...regions]);
         this.notify('Loops cannot overlap. The edit was refused.');
         return;
       }
       next.start = fit.start;
       next.end = fit.end;
     }
-    this.store.set({ regions: sortRegions(regions.map((r) => (r.id === id ? next : r))) });
+    this.commitRegions(regions.map((r) => (r.id === id ? next : r)));
   }
 
   private setRepeats(id: string, repeats: number): void {
+    if (this.store.get().lengthMode === 'target') return;
     this.updateRegion(id, { repeats });
   }
 
@@ -533,10 +628,10 @@ export class App {
   removeRegion(id: string): void {
     const { regions, selectedId, previewingId } = this.store.get();
     if (previewingId === id) this.stopAux();
-    this.store.set({
-      regions: regions.filter((r) => r.id !== id),
-      selectedId: selectedId === id ? null : selectedId,
-    });
+    this.commitRegions(
+      regions.filter((r) => r.id !== id),
+      { selectedId: selectedId === id ? null : selectedId },
+    );
   }
 
   // ---- zoom --------------------------------------------------------------------
@@ -777,11 +872,13 @@ export class App {
       else orig = t < this.aux.seamTime ? this.aux.region.end - (this.aux.seamTime - t) : this.aux.region.start + (t - this.aux.seamTime);
       this.transport.setTime(orig, song.duration);
       this.waveform?.setCursor(orig, true);
+      this.timelineStrip.setPosition(originalToExtended(this.timeline, orig));
       return;
     }
     const t = this.player.getTime();
     this.transport.setTime(t, this.player.duration);
     const orig = playMode === 'extended' ? extendedToOriginal(this.timeline, t).time : t;
     this.waveform?.setCursor(orig, this.player.isPlaying());
+    this.timelineStrip.setPosition(playMode === 'extended' ? t : originalToExtended(this.timeline, t));
   }
 }

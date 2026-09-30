@@ -654,3 +654,71 @@ dialog.export-dialog::backdrop {
     grid-row: 1 / span 2;
   }
 }
+
+/* ---- length / timeline ---- */
+
+input.num.wide {
+  width: 6em;
+}
+
+input[aria-invalid='true'] {
+  border-color: var(--danger);
+}
+
+.advanced {
+  margin-top: 10px;
+  font-size: 0.9rem;
+}
+
+.advanced summary {
+  cursor: pointer;
+  color: var(--muted);
+}
+
+.advanced .field {
+  margin: 8px 0 4px;
+  display: flex;
+}
+
+.advanced input[type='range'] {
+  max-width: 260px;
+}
+
+.tl-wrap {
+  position: relative;
+}
+
+.tl-bar {
+  display: flex;
+  height: 30px;
+  border-radius: 6px;
+  overflow: hidden;
+  background: var(--panel-2);
+  border: 1px solid var(--border);
+  cursor: pointer;
+}
+
+.tl-block {
+  height: 100%;
+  background: var(--panel-2);
+  box-shadow: inset 1px 0 0 var(--border);
+  font: 600 10px/30px var(--font);
+  color: #fff;
+  text-align: center;
+  overflow: hidden;
+  min-width: 1px;
+}
+
+.tl-block.repeat {
+  box-shadow: inset 1px 0 0 rgba(255, 255, 255, 0.5);
+}
+
+.tl-head {
+  position: absolute;
+  top: -3px;
+  bottom: -3px;
+  width: 2px;
+  background: var(--cursor);
+  pointer-events: none;
+  border-radius: 2px;
+}

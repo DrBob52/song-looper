@@ -20,6 +20,8 @@ export interface RegionsPanelInfo {
   hasGrid: boolean;
   /** Id of the region whose loop preview is playing. */
   previewingId: string | null;
+  /** Repeat counts are computed from a target length, so the steppers are read-only. */
+  repeatsLocked: boolean;
 }
 
 interface Row {
@@ -29,6 +31,8 @@ interface Row {
   times: HTMLElement;
   meta: HTMLElement;
   repeats: HTMLInputElement;
+  dec: HTMLButtonElement;
+  inc: HTMLButtonElement;
   snap: HTMLInputElement;
   loopBtn: HTMLButtonElement;
 }
@@ -92,6 +96,10 @@ export class RegionsPanel {
       const bars = info.barsOf(region);
       row.meta.textContent = `${len.toFixed(1)} s${bars !== null ? ` · ${formatBars(bars)}` : ''}`;
       if (document.activeElement !== row.repeats) row.repeats.value = String(region.repeats);
+      row.repeats.disabled = info.repeatsLocked;
+      row.dec.disabled = info.repeatsLocked;
+      row.inc.disabled = info.repeatsLocked;
+      row.repeats.title = info.repeatsLocked ? 'Set by the target length' : '';
       row.snap.checked = region.snapToBars !== false;
       row.snap.disabled = !info.hasGrid;
       row.snap.title = info.hasGrid ? 'Snap edges to bars (off: snap to beats). Shift-drag to ignore.' : 'Snapping needs beat analysis';
@@ -182,7 +190,7 @@ export class RegionsPanel {
         ]),
       ],
     );
-    return { el, swatch, title, times, meta, repeats, snap, loopBtn };
+    return { el, swatch, title, times, meta, repeats, dec, inc, snap, loopBtn };
   }
 }
 
