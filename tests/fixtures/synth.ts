@@ -95,6 +95,8 @@ export interface SynthSongOptions {
   beatsPerBar?: number;
   /** Silence before the first downbeat, in seconds. */
   leadIn?: number;
+  /** Off-beat hi-hats (default true). They make beat tracking harder: they sit half a beat off the kick. */
+  hats?: boolean;
 }
 
 function addHarmonics(
@@ -170,6 +172,7 @@ export function synthSong(options: SynthSongOptions = {}): SynthSong {
   const barsPerSection = options.barsPerSection ?? 4;
   const beatsPerBar = options.beatsPerBar ?? 4;
   const leadIn = options.leadIn ?? 0;
+  const hats = options.hats ?? true;
 
   const beat = 60 / bpm;
   const bar = beat * beatsPerBar;
@@ -199,7 +202,7 @@ export function synthSong(options: SynthSongOptions = {}): SynthSong {
         const t = barStart + k * beat;
         beatTimes.push(t);
         addKick(out, Math.round(t * sampleRate), k === 0 ? 0.9 : 0.6, sampleRate);
-        addHat(out, Math.round((t + beat / 2) * sampleRate), 0.12, sampleRate, s * 1000 + b * 10 + k);
+        if (hats) addHat(out, Math.round((t + beat / 2) * sampleRate), 0.12, sampleRate, s * 1000 + b * 10 + k);
       }
     }
   }

@@ -18,8 +18,8 @@ export interface WaveformCallbacks {
   getSnap(id: string): ((t: number) => number) | null;
   /** Allowed [lo, hi] range for a loop region so it cannot overlap its neighbours. */
   getBounds(id: string): Span | null;
-  /** Minimum region length in seconds. */
-  getMinLength(): number;
+  /** Minimum region length in seconds (one bar or beat when snapping). */
+  getMinLength(id: string): number;
 }
 
 export interface GridData {
@@ -358,7 +358,8 @@ export class WaveformView {
     if (snap) {
       start = snap(start);
       end = snap(end);
-      if (end - start < this.cb.getMinLength()) end = start + this.cb.getMinLength();
+      const minLen = this.cb.getMinLength(SELECTION_ID);
+      if (end - start < minLen) end = start + minLen;
     }
     region.setOptions({ start, end });
     if (region.element) {
@@ -383,7 +384,7 @@ export class WaveformView {
     track.rawEnd += region.end - track.lastEnd;
 
     const snap = this.shiftDown ? null : this.cb.getSnap(region.id);
-    const minLen = this.cb.getMinLength();
+    const minLen = this.cb.getMinLength(region.id);
     const bounds = this.cb.getBounds(region.id);
     let start = track.rawStart;
     let end = track.rawEnd;

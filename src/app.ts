@@ -1,5 +1,8 @@
+import { AnalysisClient, AnalysisSupersededError } from './analysis/client';
+import { ANALYSIS_CONFIG } from './analysis/config';
+import type { Analysis, AnalysisStage, AnalysisUpdate } from './analysis/types';
 import { RENDER_CONFIG } from './audio/config';
-import { computePeaks, decodeFile } from './audio/decode';
+import { computePeaks, decodeFile, toMonoAnalysisRate } from './audio/decode';
 import type { DecodedSong } from './audio/decode';
 import { Player } from './audio/player';
 import { renderLoopBody, renderSeamSnippet } from './audio/preview';
@@ -12,9 +15,12 @@ import {
 } from './audio/render';
 import { RenderClient, SupersededError } from './audio/renderClient';
 import { downloadBlob, estimateWavSize } from './audio/wav';
+import { barsBetween, emptyGrid, makeGrid, snapTime } from './grid';
+import type { Grid } from './grid';
 import type { LoopRegion, Plan, Span } from './model';
 import { MAX_EXTENDED_SECONDS } from './model';
 import { MIN_REGION_SECONDS, fitSpan, neighbourBounds, newRegionId, nextColor, sortRegions } from './plan';
+import { AnalysisControls } from './ui/analysisControls';
 import { Dropzone } from './ui/dropzone';
 import { h } from './ui/dom';
 import { ExportDialog } from './ui/exportDialog';
@@ -38,6 +44,28 @@ export interface AppState {
   /** Loop currently being previewed (Loop button), if any. */
   previewingId: string | null;
   renderState: 'idle' | 'rendering' | 'ready' | 'error';
+  analysis: Analysis | null;
+  analysisState: 'idle' | 'running' | 'done' | 'error';
+  grid: Grid;
+}
+
+/** Overall analysis progress (0..1) from a stage and the progress within it. */
+function overallProgress(stage: AnalysisStage, pct: number): number {
+  const bands: Record<AnalysisStage, [number, number]> = {
+    stft: [0, 0.55],
+    beats: [0.55, 0.7],
+    features: [0.7, 0.8],
+    ssm: [0.8, 0.9],
+    candidates: [0.9, 1],
+  };
+  const [a, b] = bands[stage];
+  return a + (b - a) * Math.max(0, Math.min(1, pct));
+}
+
+function stageLabel(stage: AnalysisStage): string {
+  if (stage === 'stft' || stage === 'beats') return 'Finding beats\u2026';
+  if (stage === 'features' || stage === 'ssm') return 'Comparing sections\u2026';
+  return 'Ranking loops\u2026';
 }
 
 type AuxInfo =
@@ -56,9 +84,14 @@ export class App {
     notice: null,
     previewingId: null,
     renderState: 'idle',
+    analysis: null,
+    analysisState: 'idle',
+    grid: emptyGrid(),
   });
   readonly player = new Player();
   private renderClient = new RenderClient();
+  private analysisClient = new AnalysisClient();
+  private analysisControls: AnalysisControls;
   private dropzone: Dropzone;
   private transport: Transport;
   private regionsPanel: RegionsPanel;
@@ -97,6 +130,11 @@ export class App {
         this.waveform?.setHighlight(r ? { start: r.start, end: r.end } : null);
       },
     });
+    this.analysisControls = new AnalysisControls({
+      onTempo: (bpm) => void this.updateAnalysis({ bpm }),
+      onMeter: (n) => void this.updateAnalysis({ beatsPerBar: n }),
+      onShiftBar: (d) => void this.updateAnalysis({ phaseShift: d }),
+    });
     this.lengthPanel = new LengthPanel();
     this.exportDialog = new ExportDialog({ onExport: (o) => this.doExport(o), onCancel: () => undefined });
     this.waveHost = h('div', { class: 'wave-host', attrs: { 'data-testid': 'waveform' } });
@@ -115,6 +153,7 @@ export class App {
       [
         h('section', { class: 'card', attrs: { 'aria-label': 'Waveform' } }, [
           toolbar,
+          this.analysisControls.el,
           this.waveHost,
           h('div', { class: 'wave-hint' }, [
             'Click to seek. Drag on the waveform to select a span, then press ',
@@ -165,12 +204,24 @@ export class App {
     if (regionsChanged || s.selectedId !== prev.selectedId || s.song !== prev.song) {
       this.waveform?.setRegions(s.regions, s.selectedId);
     }
-    if (regionsChanged || s.selectedId !== prev.selectedId || s.previewingId !== prev.previewingId || s.song !== prev.song) {
+    if (
+      regionsChanged ||
+      s.selectedId !== prev.selectedId ||
+      s.previewingId !== prev.previewingId ||
+      s.song !== prev.song ||
+      s.grid !== prev.grid
+    ) {
       this.regionsPanel.update(s.regions, s.selectedId, {
-        barsOf: () => null,
-        hasGrid: false,
+        barsOf: (r) => barsBetween(s.grid, r.start, r.end),
+        hasGrid: s.grid.beats.length > 0,
         previewingId: s.previewingId,
       });
+    }
+    if (s.grid !== prev.grid || s.analysis !== prev.analysis) {
+      this.waveform?.setGrid(s.grid.display ? { beats: s.grid.beats, bars: s.grid.bars } : null, []);
+    }
+    if (s.analysis !== prev.analysis || s.analysisState !== prev.analysisState) {
+      this.analysisControls.update(s.analysis, s.analysisState === 'running');
     }
     if (s.selection !== prev.selection) this.waveform?.setSelection(s.selection);
     if (s.playMode !== prev.playMode) this.transport.setMode(s.playMode);
@@ -261,13 +312,15 @@ export class App {
     } finally {
       if (token === this.loadToken) {
         this.dropzone.setBusy(false);
-        this.dropzone.hideProgress();
+        // A running analysis owns the progress bar from here on.
+        if (this.store.get().analysisState !== 'running') this.dropzone.hideProgress();
       }
     }
   }
 
   private stopEverything(): void {
     window.clearTimeout(this.renderTimer);
+    this.analysisClient.cancel();
     this.player.stop();
     this.stopAux();
   }
@@ -288,6 +341,9 @@ export class App {
       previewingId: null,
       renderState: 'idle',
       notice: null,
+      analysis: null,
+      analysisState: 'idle',
+      grid: emptyGrid(),
     });
     this.dropzone.showFile(song);
     this.songPanel.hidden = false;
@@ -299,16 +355,80 @@ export class App {
       onSelection: (sel) => this.store.set({ selection: sel }),
       onRegionEdit: (id, start, end) => this.updateRegion(id, { start, end }),
       onRegionSelect: (id) => this.selectRegion(id),
-      getSnap: () => null,
+      getSnap: (id) => {
+        const s = this.store.get();
+        if (s.grid.beats.length === 0) return null;
+        const toBars = id === SELECTION_ID ? true : s.regions.find((r) => r.id === id)?.snapToBars !== false;
+        return (t) => snapTime(this.store.get().grid, t, toBars);
+      },
       getBounds: (id) => {
         const s = this.store.get();
         return id === SELECTION_ID || !s.song ? null : neighbourBounds(s.regions, id, s.song.duration);
       },
-      getMinLength: () => MIN_REGION_SECONDS,
+      getMinLength: (id) => {
+        const s = this.store.get();
+        if (s.grid.beats.length === 0) return MIN_REGION_SECONDS;
+        const toBars = id === SELECTION_ID ? true : s.regions.find((r) => r.id === id)?.snapToBars !== false;
+        return Math.max(MIN_REGION_SECONDS, toBars ? s.grid.barSeconds : s.grid.beatSeconds);
+      },
     });
     this.waveform.setZoom(this.store.get().zoom);
     this.waveform.setRegions([], null);
     this.renderTime();
+    void this.startAnalysis(song);
+  }
+
+  // ---- analysis ----------------------------------------------------------------
+
+  private async startAnalysis(song: DecodedSong): Promise<void> {
+    const token = this.loadToken;
+    this.analysisClient.cancel();
+    this.store.set({ analysisState: 'running', analysis: null, grid: emptyGrid() });
+    this.dropzone.showProgress('Finding beats\u2026', 0);
+    try {
+      const samples = await toMonoAnalysisRate(song.buffer);
+      if (token !== this.loadToken) return;
+      const analysis = await this.analysisClient.analyze(
+        samples,
+        ANALYSIS_CONFIG.sampleRate,
+        ANALYSIS_CONFIG.bars.beatsPerBar,
+        (stage, pct) => {
+          if (token === this.loadToken) this.dropzone.showProgress(stageLabel(stage), overallProgress(stage, pct));
+        },
+      );
+      if (token !== this.loadToken) return;
+      this.applyAnalysis(analysis);
+    } catch (err) {
+      if (err instanceof AnalysisSupersededError || token !== this.loadToken) return;
+      this.store.set({ analysisState: 'error' });
+      this.dropzone.showError(`Analysis failed: ${err instanceof Error ? err.message : String(err)}. You can still add loops by hand.`);
+    } finally {
+      if (token === this.loadToken) this.dropzone.hideProgress();
+    }
+  }
+
+  private applyAnalysis(analysis: Analysis): void {
+    const song = this.store.get().song;
+    if (!song) return;
+    this.store.set({ analysis, analysisState: 'done', grid: makeGrid(analysis, song.duration) });
+  }
+
+  private async updateAnalysis(change: AnalysisUpdate): Promise<void> {
+    const token = this.loadToken;
+    this.store.set({ analysisState: 'running' });
+    try {
+      const analysis = await this.analysisClient.update(change, (stage, pct) => {
+        if (token === this.loadToken) this.dropzone.showProgress(stageLabel(stage), overallProgress(stage, pct));
+      });
+      if (token !== this.loadToken) return;
+      this.applyAnalysis(analysis);
+    } catch (err) {
+      if (err instanceof AnalysisSupersededError || token !== this.loadToken) return;
+      this.store.set({ analysisState: 'error' });
+      this.notify(`Analysis failed: ${err instanceof Error ? err.message : String(err)}`);
+    } finally {
+      if (token === this.loadToken) this.dropzone.hideProgress();
+    }
   }
 
   // ---- regions -----------------------------------------------------------------
@@ -321,10 +441,16 @@ export class App {
   addLoop(span?: Span, extra: Partial<LoopRegion> = {}): string | null {
     const { song, regions, selection } = this.store.get();
     if (!song) return null;
+    const { grid } = this.store.get();
     let want = span ?? selection;
     if (!want) {
       const at = this.playheadOriginalTime();
-      want = { start: at, end: Math.min(song.duration, at + Math.min(8, song.duration / 4)) };
+      if (grid.steady) {
+        const start = snapTime(grid, at, true);
+        want = { start, end: Math.min(song.duration, start + 4 * grid.barSeconds) };
+      } else {
+        want = { start: at, end: Math.min(song.duration, at + Math.min(8, song.duration / 4)) };
+      }
     }
     const fit = fitSpan(regions, want, song.duration, MIN_REGION_SECONDS);
     if (!fit) {

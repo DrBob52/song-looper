@@ -103,3 +103,26 @@ export async function dragSelect(page: Page, fromFrac: number, toFrac: number): 
   for (let i = 1; i <= steps; i++) await page.mouse.move(x0 + ((x1 - x0) * i) / steps, y);
   await page.mouse.up();
 }
+
+/** Read a value out of the app store in the page. */
+export async function appState<T>(page: Page, pick: string): Promise<T> {
+  return page.evaluate(
+    (expr) => {
+      const app = (window as unknown as { songLooper: { store: { get(): unknown } } }).songLooper;
+      return new Function('s', `return ${expr}`)(app.store.get());
+    },
+    pick,
+  ) as Promise<T>;
+}
+
+/** Wait until the analysis worker has delivered its result. */
+export async function waitForAnalysis(page: Page): Promise<void> {
+  await page.waitForFunction(
+    () => {
+      const app = (window as unknown as { songLooper: { store: { get(): { analysisState: string } } } }).songLooper;
+      return app.store.get().analysisState === 'done';
+    },
+    undefined,
+    { timeout: 60_000 },
+  );
+}

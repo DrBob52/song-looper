@@ -558,3 +558,17 @@ dialog.export-dialog::backdrop {
   font-size: 1.35rem;
   font-weight: 650;
 }
+
+.analysis-controls {
+  display: grid;
+  gap: 6px;
+  margin-bottom: 8px;
+}
+
+.analysis-row {
+  gap: 6px 14px;
+}
+
+.warn-text {
+  color: var(--warn);
+}
