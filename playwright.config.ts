@@ -4,7 +4,7 @@ import { defineConfig } from '@playwright/test';
 // matches the browser pre-installed under PLAYWRIGHT_BROWSERS_PATH. If you run
 // with a different browser, set CHROMIUM_PATH to its executable.
 const executablePath = process.env.CHROMIUM_PATH || undefined;
-const PORT = 4173;
+const PORT = 4174;
 
 export default defineConfig({
   testDir: 'tests/e2e',
@@ -25,7 +25,7 @@ export default defineConfig({
   webServer: {
     command: `npm run build && npx vite preview --host 127.0.0.1 --port ${PORT} --strictPort`,
     url: `http://127.0.0.1:${PORT}`,
-    reuseExistingServer: !process.env.CI,
+    reuseExistingServer: false,
     timeout: 180_000,
   },
 });

@@ -1,12 +1,8 @@
-import { formatTime } from './util/time';
+import './style.css';
+import { App } from './app';
 
-const app = document.querySelector<HTMLDivElement>('#app');
-if (!app) throw new Error('#app not found');
-
-app.innerHTML = `
-  <header>
-    <h1>Song Looper</h1>
-    <p>Drop a song, find loops that repeat cleanly, and export an extended version.</p>
-  </header>
-  <p class="muted">Ready. Empty song length: ${formatTime(0)}</p>
-`;
+const root = document.querySelector<HTMLDivElement>('#app');
+if (!root) throw new Error('#app not found');
+const app = new App(root);
+// Handy for debugging and end-to-end tests.
+(window as unknown as { songLooper: App }).songLooper = app;
