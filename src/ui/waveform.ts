@@ -132,6 +132,10 @@ export class WaveformView {
     const onScheme = (): void => this.refreshTheme();
     mq.addEventListener('change', onScheme);
     this.disposers.push(() => mq.removeEventListener('change', onScheme));
+    // A host page (claude.ai) can switch theme via data-theme on <html>.
+    const themeObserver = new MutationObserver(onScheme);
+    themeObserver.observe(document.documentElement, { attributes: true, attributeFilter: ['data-theme'] });
+    this.disposers.push(() => themeObserver.disconnect());
   }
 
   /** Re-read theme colours after a light/dark switch. */

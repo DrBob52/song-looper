@@ -80,6 +80,13 @@ publishes `dist/` with the official `actions/configure-pages`, `actions/upload-p
 `actions/deploy-pages`. One-time setup: in the repository settings, set **Pages > Source** to **GitHub Actions**.
 The workflow can also be run by hand from the Actions tab.
 
+### Running as a claude.ai artifact
+
+The same build also runs as a claude.ai artifact. A page there can't start downloads itself, so
+`src/audio/save.ts` asks the host through `claude.use("downloads")`. That save dialog accepts `.zip` but not
+`.wav`, so inside an artifact the export arrives as a zip holding the WAV. Everywhere else it's a plain WAV
+download.
+
 ## How loop suggestions work
 
 All of this is plain TypeScript in `src/analysis/` (pure functions, no Essentia, no WASM) and every weight and

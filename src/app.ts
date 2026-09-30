@@ -18,7 +18,8 @@ import { noopLabelProvider } from './label/provider';
 import type { LabelProvider } from './label/provider';
 import { isNeutral, stretchedLength } from './audio/stretch';
 import { solveRepeats } from './audio/target';
-import { downloadBlob, estimateWavSize } from './audio/wav';
+import { estimateWavSize } from './audio/wav';
+import { saveWav, warmUpSave } from './audio/save';
 import { barsBetween, emptyGrid, makeGrid, snapTime } from './grid';
 import type { Grid } from './grid';
 import type { LoopRegion, Plan, Span } from './model';
@@ -184,6 +185,7 @@ export class App {
     });
     this.timelineStrip = new TimelineStrip((t) => void this.seekExtended(t));
     this.exportDialog = new ExportDialog({ onExport: (o) => this.doExport(o), onCancel: () => undefined });
+    warmUpSave();
     this.waveHost = h('div', { class: 'wave-host', attrs: { 'data-testid': 'waveform' } });
     this.noticeEl = h('div', { class: 'notice', attrs: { role: 'status', 'data-testid': 'notice' } });
 
@@ -900,7 +902,7 @@ export class App {
       },
     );
     this.exportDialog.setProgress('Saving…', 1);
-    downloadBlob(blob, opts.filename);
+    await saveWav(blob, opts.filename);
   }
 
   // ---- ticker ------------------------------------------------------------------

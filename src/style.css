@@ -24,8 +24,11 @@
   --mono: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
 }
 
+/* Dark palette: follows the OS setting unless a host (e.g. claude.ai) sets
+   data-theme on <html>; an explicit data-theme wins in both directions. */
 @media (prefers-color-scheme: dark) {
-  :root {
+  :root:not([data-theme='light']) {
+    color-scheme: dark;
     --bg: #0e1116;
     --panel: #171b22;
     --panel-2: #1f242d;
@@ -44,6 +47,31 @@
     --grid-bar: rgba(232, 236, 242, 0.34);
     --shadow: none;
   }
+}
+
+:root[data-theme='dark'] {
+  color-scheme: dark;
+  --bg: #0e1116;
+  --panel: #171b22;
+  --panel-2: #1f242d;
+  --text: #e8ecf2;
+  --muted: #9aa5b5;
+  --border: #2b323d;
+  --accent: #6ea0ff;
+  --accent-contrast: #0b1220;
+  --accent-soft: rgba(110, 160, 255, 0.14);
+  --danger: #ff7b72;
+  --warn: #f0b35a;
+  --ok: #56d364;
+  --wave: #7d899b;
+  --cursor: #ff5d7a;
+  --grid: rgba(232, 236, 242, 0.1);
+  --grid-bar: rgba(232, 236, 242, 0.34);
+  --shadow: none;
+}
+
+:root[data-theme='light'] {
+  color-scheme: light;
 }
 
 * {
