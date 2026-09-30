@@ -45,6 +45,13 @@ export const ANALYSIS_CONFIG = {
     refineBefore: 0.06,
     refineAfter: 0.09,
     /**
+     * The flux of the very first frame is undefined, so a beat at t = 0 can never be detected. If the first
+     * tracked beat is about k periods after 0 (k <= prependMaxBeats, within prependToleranceSeconds), the
+     * missing k beats are filled in so that loops can start at the beginning of the song.
+     */
+    prependMaxBeats: 4,
+    prependToleranceSeconds: 0.05,
+    /**
      * Broadband flux can lock onto off-beat hi-hats. If low-frequency (kick) onsets are this many times
      * stronger half a beat away from the tracked beats, move the beats there.
      */
@@ -90,17 +97,22 @@ export const ANALYSIS_CONFIG = {
 
   /** 4.8 Sections */
   sections: {
-    /** Checkerboard kernel size in beats. */
-    kernelBeats: 16,
+    /**
+     * Checkerboard kernel sizes in beats (full width). Each scale gives a novelty curve; the curves are
+     * max-normalised and combined with a geometric mean, so only boundaries that show at every scale
+     * survive (a small kernel alone reacts to every chord change, a large one alone localises poorly).
+     */
+    kernelScales: [16, 32],
     /** Minimum gap between novelty peaks, in beats. */
     minGapBeats: 8,
-    /** A novelty peak must exceed this fraction of the novelty curve's maximum... */
-    peakRelativeThreshold: 0.15,
-    /** ...and this multiple of the curve's mean (prevents picking noise in flat songs). */
-    peakMeanFactor: 1.2,
-    /** Agglomerative clustering: merge while mean cosine distance is below this. */
+    /**
+     * A peak must stand out from its surroundings: its prominence (height above the higher of the two
+     * valleys next to it) must be at least this fraction of the most prominent peak's.
+     */
+    peakProminence: 0.3,
+    /** Agglomerative clustering: merge while cosine distance between cluster means is below this. */
     clusterDistance: 0.25,
-    /** Segments shorter than this many bars are merged into their neighbour. */
+    /** Boundaries closer than this many bars to each other or to the song edges are dropped. */
     minSectionBars: 2,
   },
 

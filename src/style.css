@@ -572,3 +572,85 @@ dialog.export-dialog::backdrop {
 .warn-text {
   color: var(--warn);
 }
+
+/* ---- suggestions ---- */
+
+.suggestion-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: grid;
+  gap: 8px;
+}
+
+.suggestion {
+  display: flex;
+  gap: 10px;
+  padding: 9px 10px;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  background: var(--panel);
+}
+
+.suggestion:hover {
+  border-color: var(--highlight);
+}
+
+.suggestion-rank {
+  flex: none;
+  width: 1.6rem;
+  height: 1.6rem;
+  border-radius: 50%;
+  background: var(--panel-2);
+  display: grid;
+  place-items: center;
+  font: 600 0.8rem var(--mono);
+  color: var(--muted);
+}
+
+.suggestion-main {
+  flex: 1 1 auto;
+  min-width: 0;
+  display: grid;
+  gap: 6px;
+}
+
+.suggestion-title {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 4px 12px;
+}
+
+.suggestion-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.stars {
+  color: #d97706;
+  letter-spacing: 1px;
+  font-size: 0.95rem;
+}
+
+.suggestions-more,
+.btn.more {
+  margin-top: 8px;
+}
+
+@media (min-width: 720px) {
+  .suggestion-main {
+    grid-template-columns: 1fr auto;
+    align-items: center;
+    column-gap: 12px;
+  }
+  .suggestion-title,
+  .suggestion-reason {
+    grid-column: 1;
+  }
+  .suggestion-actions {
+    grid-column: 2;
+    grid-row: 1 / span 2;
+  }
+}

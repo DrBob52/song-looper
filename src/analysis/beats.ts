@@ -219,6 +219,28 @@ export function refineBeatTimes(
   });
 }
 
+/**
+ * Fill in beats missing at the very start of the song (see beats.prependMaxBeats). Returns the times
+ * unchanged unless the first beat sits about k whole periods after time zero.
+ */
+export function prependStartBeats(
+  beatTimes: number[],
+  cfg: Pick<BeatConfig, 'prependMaxBeats' | 'prependToleranceSeconds'> = ANALYSIS_CONFIG.beats,
+): number[] {
+  if (beatTimes.length < 4) return beatTimes;
+  const d: number[] = [];
+  for (let i = 1; i < Math.min(beatTimes.length, 17); i++) d.push(beatTimes[i]! - beatTimes[i - 1]!);
+  const period = median(d);
+  const first = beatTimes[0]!;
+  if (!(period > 0)) return beatTimes;
+  const k = Math.round(first / period);
+  if (k < 1 || k > cfg.prependMaxBeats) return beatTimes;
+  if (Math.abs(first - k * period) > cfg.prependToleranceSeconds) return beatTimes;
+  const added: number[] = [];
+  for (let j = k; j >= 1; j--) added.push(Math.max(0, first - j * period));
+  return [...added, ...beatTimes];
+}
+
 /** Tempo implied by beat times: 60 / median inter-beat interval. */
 export function tempoFromBeats(beatTimes: number[]): number | null {
   if (beatTimes.length < 3) return null;

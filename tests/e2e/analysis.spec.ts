@@ -48,6 +48,7 @@ test('snap can switch to beats, and Shift-drag turns snapping off', async ({ pag
   await dragSelect(page, 0.2, 0.5);
   await page.keyboard.press('l');
   await page.getByTestId('snap-toggle').uncheck();
+  await page.getByTestId('waveform').scrollIntoViewIfNeeded();
 
   const beats = await appState<number[]>(page, 's.grid.beats');
   const bars = await appState<number[]>(page, 's.grid.bars');

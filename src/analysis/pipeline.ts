@@ -1,12 +1,16 @@
 import { barBeatIndices, downbeatEvidence, pickBarPhase } from './bars';
-import { correctBeatPhase, refineBeatTimes, tempoFromBeats, trackBeatFrames } from './beats';
+import { correctBeatPhase, prependStartBeats, refineBeatTimes, tempoFromBeats, trackBeatFrames } from './beats';
 import type { FineOnset } from './beats';
+import { findCandidates } from './candidates';
 import { ANALYSIS_CONFIG } from './config';
-import { computeFineOnset, computeFrameData } from './features';
-import type { FrameData } from './features';
+import { beatSyncFeatures, computeFineOnset, computeFrameData } from './features';
+import type { BeatFeatures, FrameData } from './features';
+import { findSections } from './sections';
+import { selfSimilarity } from './ssm';
+import type { SelfSimilarity } from './ssm';
 import { estimateTempo } from './tempo';
 import type { TempoResult } from './tempo';
-import type { Analysis, AnalysisStage, AnalysisUpdate } from './types';
+import type { Analysis, AnalysisStage, AnalysisUpdate, LoopCandidate, Section } from './types';
 
 export type ProgressFn = (stage: AnalysisStage, pct: number) => void;
 
@@ -34,6 +38,10 @@ export class AnalysisSession {
   private phaseShift = 0;
   private bpmOverride: number | null = null;
   private silent = false;
+  private features: BeatFeatures | null = null;
+  private ssm: SelfSimilarity | null = null;
+  private sections: Section[] = [];
+  private candidates: LoopCandidate[] = [];
 
   constructor(
     private samples: Float32Array,
@@ -57,13 +65,16 @@ export class AnalysisSession {
     progress('stft', 1);
     this.computeBeats(progress);
     this.computeBars();
-    return this.assemble(progress);
+    this.computeFeaturesAndSsm(progress);
+    this.computeStructure(progress);
+    return this.assemble();
   }
 
   /** Re-run from the changed stage onward using cached data. */
   update(change: AnalysisUpdate, progress: ProgressFn = () => undefined): Analysis {
     if (this.silent || !this.frameData) return this.assemble();
     let rebeat = false;
+    let rebar = false;
     if (change.bpm !== undefined) {
       this.bpmOverride = change.bpm;
       rebeat = true;
@@ -71,19 +82,24 @@ export class AnalysisSession {
     if (change.beatsPerBar !== undefined && change.beatsPerBar !== this.beatsPerBar) {
       this.beatsPerBar = change.beatsPerBar;
       this.phaseShift = 0;
+      rebar = true;
     }
     if (rebeat) {
       this.phaseShift = 0;
       this.computeBeats(progress);
-      this.computeBars();
-    } else if (change.beatsPerBar !== undefined) {
-      this.computeBars();
+      rebar = true;
     }
+    if (rebar) this.computeBars();
     if (change.phaseShift) {
       const b = this.beatsPerBar;
       this.phaseShift = (((this.phaseShift + change.phaseShift) % b) + b) % b;
+      rebar = true;
     }
-    return this.assemble(progress);
+    // Beat-synchronous features and the similarity matrix depend on the beats only; the sections
+    // and candidates also depend on where the bar lines are.
+    if (rebeat) this.computeFeaturesAndSsm(progress);
+    if (rebar || rebeat) this.computeStructure(progress);
+    return this.assemble();
   }
 
   // ---- stages ------------------------------------------------------------------
@@ -100,8 +116,9 @@ export class AnalysisSession {
     progress('beats', 0.4);
     this.fine ??= computeFineOnset(this.samples, this.sampleRate);
     progress('beats', 0.8);
-    this.beatTimes = coarse.length ? refineBeatTimes(coarse, this.fine) : [];
-    this.bpmRefined = tempoFromBeats(this.beatTimes) ?? target;
+    const refined = coarse.length ? refineBeatTimes(coarse, this.fine) : [];
+    this.bpmRefined = tempoFromBeats(refined) ?? target;
+    this.beatTimes = prependStartBeats(refined);
     progress('beats', 1);
   }
 
@@ -115,6 +132,56 @@ export class AnalysisSession {
     this.autoPhase = pickBarPhase(evidence, this.beatsPerBar).phase;
   }
 
+  /** Whether suggestions are computed at all for this song. */
+  private canSuggest(): boolean {
+    const lim = ANALYSIS_CONFIG.limits;
+    return !this.silent && this.duration >= lim.minSongSeconds && this.beatTimes.length >= lim.minBeats;
+  }
+
+  private computeFeaturesAndSsm(progress: ProgressFn): void {
+    this.features = null;
+    this.ssm = null;
+    if (!this.canSuggest() || !this.frameData) return;
+    progress('features', 0);
+    this.features = beatSyncFeatures(this.frameData, this.beatTimes);
+    progress('features', 1);
+    progress('ssm', 0);
+    this.ssm = selfSimilarity(this.features.combined, this.features.beats, this.features.dims, ANALYSIS_CONFIG.ssm.delay, (f) =>
+      progress('ssm', f),
+    );
+    progress('ssm', 1);
+  }
+
+  private computeStructure(progress: ProgressFn): void {
+    this.sections = [];
+    this.candidates = [];
+    if (!this.features || !this.ssm) return;
+    progress('candidates', 0);
+    const barBeats = this.barBeats();
+    const { sections, boundaries } = findSections({
+      ssm: this.ssm,
+      features: this.features,
+      beats: this.beatTimes,
+      barBeats,
+      beatsPerBar: this.beatsPerBar,
+      duration: this.duration,
+      delay: ANALYSIS_CONFIG.ssm.delay,
+    });
+    this.sections = sections;
+    progress('candidates', 0.5);
+    this.candidates = findCandidates({
+      ssm: this.ssm,
+      features: this.features,
+      beats: this.beatTimes,
+      barBeats,
+      beatsPerBar: this.beatsPerBar,
+      sections,
+      boundaries,
+      duration: this.duration,
+    });
+    progress('candidates', 1);
+  }
+
   /** Beat index of the first downbeat after the user's nudge. */
   private barPhase(): number {
     return (this.autoPhase + this.phaseShift) % this.beatsPerBar;
@@ -125,7 +192,7 @@ export class AnalysisSession {
     return barBeatIndices(this.beatTimes.length, this.barPhase(), this.beatsPerBar);
   }
 
-  private assemble(_progress: ProgressFn = () => undefined): Analysis {
+  private assemble(): Analysis {
     const lim = ANALYSIS_CONFIG.limits;
     const confidence = this.tempo?.confidence ?? 0;
     const beats = this.beatTimes;
@@ -145,8 +212,8 @@ export class AnalysisSession {
       beats,
       beatsPerBar: this.beatsPerBar,
       barPhase: this.silent || !enoughBeats ? 0 : this.barPhase(),
-      sections: [],
-      candidates: [],
+      sections: this.sections,
+      candidates: this.candidates,
       duration: this.duration,
       beatConfidence: confidence,
       steadyBeat: steady,

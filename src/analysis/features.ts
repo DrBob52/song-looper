@@ -176,3 +176,95 @@ export function computeFineOnset(samples: Float32Array, sampleRate: number): Fin
   });
   return { flux, dt: fineHop / sampleRate };
 }
+
+// ---------------------------------------------------------------------------
+// Beat-synchronous features (spec 4.6)
+// ---------------------------------------------------------------------------
+
+export interface BeatFeatures {
+  beats: number;
+  chromaDims: number;
+  timbreDims: number;
+  /** beats x 12, L2-normalised mean chroma. */
+  chroma: Float32Array;
+  /** beats x 13, MFCC-style coefficients 1..13, z-scored over the song. */
+  timbre: Float32Array;
+  /** RMS level per beat in dB. */
+  loudness: Float32Array;
+  /** beats x (12 + 13): [chroma * wChroma, timbre * wTimbre]. */
+  combined: Float32Array;
+  dims: number;
+}
+
+/** DCT-II of `x`, returning coefficients 1..count (coefficient 0 is dropped). */
+export function dctCoefficients(x: Float32Array | number[], count: number): Float32Array {
+  const m = x.length;
+  const out = new Float32Array(count);
+  for (let k = 1; k <= count; k++) {
+    let s = 0;
+    for (let n = 0; n < m; n++) s += x[n]! * Math.cos((Math.PI * k * (n + 0.5)) / m);
+    out[k - 1] = s * Math.sqrt(2 / m);
+  }
+  return out;
+}
+
+/**
+ * Average the per-frame features over each beat interval: chroma (L2-normalised), timbre (40-band
+ * log-mel -> DCT -> coefficients 1..13, z-scored per coefficient over the song) and loudness (dB).
+ */
+export function beatSyncFeatures(
+  fd: FrameData,
+  beatTimes: number[],
+  cfg: FeatureConfig = ANALYSIS_CONFIG.features,
+): BeatFeatures {
+  const n = beatTimes.length;
+  const tdims = cfg.mfccCount;
+  const chroma = new Float32Array(n * CHROMA_BINS);
+  const timbre = new Float32Array(n * tdims);
+  const loudness = new Float32Array(n);
+  const meanInterval = n > 1 ? (beatTimes[n - 1]! - beatTimes[0]!) / (n - 1) : 0.5;
+  const meanMel = new Float32Array(cfg.melBands);
+
+  for (let i = 0; i < n; i++) {
+    const t0 = beatTimes[i]!;
+    const t1 = i + 1 < n ? beatTimes[i + 1]! : t0 + meanInterval;
+    const f0 = Math.min(fd.frames - 1, Math.max(0, Math.round(t0 * fd.frameRate)));
+    const f1 = Math.min(fd.frames, Math.max(f0 + 1, Math.round(t1 * fd.frameRate)));
+    const count = f1 - f0;
+    const co = i * CHROMA_BINS;
+    meanMel.fill(0);
+    let e = 0;
+    for (let f = f0; f < f1; f++) {
+      for (let c = 0; c < CHROMA_BINS; c++) chroma[co + c] = chroma[co + c]! + fd.chroma[f * CHROMA_BINS + c]!;
+      for (let b = 0; b < cfg.melBands; b++) meanMel[b] = meanMel[b]! + fd.logMel[f * cfg.melBands + b]!;
+      e += fd.energy[f]!;
+    }
+    // L2-normalise chroma
+    let norm = 0;
+    for (let c = 0; c < CHROMA_BINS; c++) norm += chroma[co + c]! * chroma[co + c]!;
+    norm = Math.sqrt(norm);
+    if (norm > 1e-9) for (let c = 0; c < CHROMA_BINS; c++) chroma[co + c] = chroma[co + c]! / norm;
+    for (let b = 0; b < cfg.melBands; b++) meanMel[b] = meanMel[b]! / count;
+    timbre.set(dctCoefficients(meanMel, tdims), i * tdims);
+    loudness[i] = 10 * Math.log10(e / count + 1e-10);
+  }
+
+  // z-score each timbre coefficient over the song
+  for (let d = 0; d < tdims; d++) {
+    let mean = 0;
+    for (let i = 0; i < n; i++) mean += timbre[i * tdims + d]!;
+    mean /= Math.max(1, n);
+    let v = 0;
+    for (let i = 0; i < n; i++) v += (timbre[i * tdims + d]! - mean) ** 2;
+    const std = Math.sqrt(v / Math.max(1, n));
+    for (let i = 0; i < n; i++) timbre[i * tdims + d] = std > 1e-9 ? (timbre[i * tdims + d]! - mean) / std : 0;
+  }
+
+  const dims = CHROMA_BINS + tdims;
+  const combined = new Float32Array(n * dims);
+  for (let i = 0; i < n; i++) {
+    for (let c = 0; c < CHROMA_BINS; c++) combined[i * dims + c] = chroma[i * CHROMA_BINS + c]! * cfg.wChroma;
+    for (let d = 0; d < tdims; d++) combined[i * dims + CHROMA_BINS + d] = timbre[i * tdims + d]! * cfg.wTimbre;
+  }
+  return { beats: n, chromaDims: CHROMA_BINS, timbreDims: tdims, chroma, timbre, loudness, combined, dims };
+}

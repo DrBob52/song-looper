@@ -26,6 +26,7 @@ import { h } from './ui/dom';
 import { ExportDialog } from './ui/exportDialog';
 import { LengthPanel } from './ui/lengthPanel';
 import { RegionsPanel } from './ui/regionsPanel';
+import { SuggestionsPanel, suggestionKey } from './ui/suggestionsPanel';
 import { Transport } from './ui/transport';
 import type { PlayMode } from './ui/transport';
 import { SELECTION_ID, WaveformView } from './ui/waveform';
@@ -92,6 +93,7 @@ export class App {
   private renderClient = new RenderClient();
   private analysisClient = new AnalysisClient();
   private analysisControls: AnalysisControls;
+  private suggestionsPanel: SuggestionsPanel;
   private dropzone: Dropzone;
   private transport: Transport;
   private regionsPanel: RegionsPanel;
@@ -135,6 +137,15 @@ export class App {
       onMeter: (n) => void this.updateAnalysis({ beatsPerBar: n }),
       onShiftBar: (d) => void this.updateAnalysis({ phaseShift: d }),
     });
+    this.suggestionsPanel = new SuggestionsPanel({
+      onPreview: (i) => void this.previewCandidate(i),
+      onAuditionSeam: (i) => void this.auditionCandidate(i),
+      onAdd: (i) => this.addCandidate(i),
+      onHover: (i) => {
+        const c = i === null ? undefined : this.store.get().analysis?.candidates[i];
+        this.waveform?.setHighlight(c ? { start: c.start, end: c.end } : null);
+      },
+    });
     this.lengthPanel = new LengthPanel();
     this.exportDialog = new ExportDialog({ onExport: (o) => this.doExport(o), onCancel: () => undefined });
     this.waveHost = h('div', { class: 'wave-host', attrs: { 'data-testid': 'waveform' } });
@@ -166,6 +177,7 @@ export class App {
           ]),
           this.noticeEl,
         ]),
+        this.suggestionsPanel.el,
         this.regionsPanel.el,
         this.lengthPanel.el,
       ],
@@ -218,7 +230,26 @@ export class App {
       });
     }
     if (s.grid !== prev.grid || s.analysis !== prev.analysis) {
-      this.waveform?.setGrid(s.grid.display ? { beats: s.grid.beats, bars: s.grid.bars } : null, []);
+      this.waveform?.setGrid(
+        s.grid.display ? { beats: s.grid.beats, bars: s.grid.bars } : null,
+        (s.analysis?.sections ?? []).map((sec) => ({ start: sec.start, label: sec.label, hint: sec.hint })),
+      );
+    }
+    if (
+      s.analysis !== prev.analysis ||
+      s.analysisState !== prev.analysisState ||
+      s.regions !== prev.regions ||
+      s.previewingId !== prev.previewingId ||
+      s.song !== prev.song
+    ) {
+      this.suggestionsPanel.update({
+        analysis: s.analysis,
+        running: s.analysisState === 'running',
+        failed: s.analysisState === 'error',
+        regions: s.regions,
+        previewingKey: s.previewingId,
+        duration: s.song?.duration ?? 0,
+      });
     }
     if (s.analysis !== prev.analysis || s.analysisState !== prev.analysisState) {
       this.analysisControls.update(s.analysis, s.analysisState === 'running');
@@ -617,34 +648,70 @@ export class App {
   }
 
   async previewLoop(id: string): Promise<void> {
-    const { song, regions, seamMs, previewingId } = this.store.get();
-    if (!song) return;
-    if (previewingId === id) {
-      this.stopAux();
-      return;
-    }
-    const region = regions.find((r) => r.id === id);
-    if (!region) return;
-    this.stopAux();
-    this.player.pause();
-    const body = renderLoopBody(song.buffer, region, { crossfadeMs: seamMs });
-    const dur = body.channels[0]!.length / body.sampleRate;
-    this.aux = { kind: 'loop', originalStart: body.originalStart, period: dur };
-    this.store.set({ previewingId: id, selectedId: id });
-    await this.player.playAux(body, { loopStart: 0, loopEnd: dur, offset: 0 });
-    if (this.aux?.kind === 'loop' && this.store.get().previewingId === id) this.stopAux();
+    const region = this.store.get().regions.find((r) => r.id === id);
+    if (region) await this.previewSpan(id, region, true);
   }
 
   async auditionSeam(id: string): Promise<void> {
-    const { song, regions, seamMs } = this.store.get();
+    const region = this.store.get().regions.find((r) => r.id === id);
+    if (region) await this.auditionSpan(id, region);
+  }
+
+  async previewCandidate(index: number): Promise<void> {
+    const c = this.store.get().analysis?.candidates[index];
+    if (c) await this.previewSpan(suggestionKey(index), c, false);
+  }
+
+  async auditionCandidate(index: number): Promise<void> {
+    const c = this.store.get().analysis?.candidates[index];
+    if (c) await this.auditionSpan(suggestionKey(index), c);
+  }
+
+  addCandidate(index: number): void {
+    const c = this.store.get().analysis?.candidates[index];
+    if (!c) return;
+    this.addLoop({ start: c.start, end: c.end }, { score: c.score });
+  }
+
+  /** Hear a span looping, rendered exactly as the export would (same seam crossfade). Toggles. */
+  private async previewSpan(key: string, span: Span, select: boolean): Promise<void> {
+    const { song, seamMs, previewingId } = this.store.get();
     if (!song) return;
-    const region = regions.find((r) => r.id === id);
-    if (!region) return;
+    if (previewingId === key) {
+      this.stopAux();
+      return;
+    }
     this.stopAux();
     this.player.pause();
-    const snip = renderSeamSnippet(song.buffer, region, { crossfadeMs: seamMs });
-    this.aux = { kind: 'seam', region: { start: region.start, end: region.end }, seamTime: snip.seamIndex / snip.sampleRate };
-    this.store.set({ selectedId: id });
+    let body: ReturnType<typeof renderLoopBody>;
+    try {
+      body = renderLoopBody(song.buffer, span, { crossfadeMs: seamMs });
+    } catch (err) {
+      this.notify(err instanceof Error ? err.message : String(err));
+      return;
+    }
+    const dur = body.channels[0]!.length / body.sampleRate;
+    this.aux = { kind: 'loop', originalStart: body.originalStart, period: dur };
+    this.store.set(select ? { previewingId: key, selectedId: key } : { previewingId: key });
+    await this.player.playAux(body, { loopStart: 0, loopEnd: dur, offset: 0 });
+    if (this.aux?.kind === 'loop' && this.store.get().previewingId === key) this.stopAux();
+  }
+
+  /** Hear the jump from the span's end back to its start. */
+  private async auditionSpan(key: string, span: Span): Promise<void> {
+    const { song, seamMs } = this.store.get();
+    if (!song) return;
+    this.stopAux();
+    this.player.pause();
+    let snip: ReturnType<typeof renderSeamSnippet>;
+    try {
+      snip = renderSeamSnippet(song.buffer, span, { crossfadeMs: seamMs });
+    } catch (err) {
+      this.notify(err instanceof Error ? err.message : String(err));
+      return;
+    }
+    this.aux = { kind: 'seam', region: { start: span.start, end: span.end }, seamTime: snip.seamIndex / snip.sampleRate };
+    if (this.store.get().regions.some((r) => r.id === key)) this.store.set({ selectedId: key });
     await this.player.playAux(snip);
     this.aux = null;
     this.renderTime();
