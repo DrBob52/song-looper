@@ -15,6 +15,7 @@
     "demo-song": "tsx scripts/make-demo-song.ts"
   },
   "dependencies": {
+    "@audio/decode-aac": "1.6.0",
     "@soundtouchjs/audio-worklet": "^2.1.1",
     "@soundtouchjs/core": "^2.1.1",
     "fft.js": "^4.0.4",

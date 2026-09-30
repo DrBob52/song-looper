@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
-import { sniffSampleRate } from '../../src/audio/sniff';
+import { readFileSync } from 'node:fs';
+import { isAdts, isMp4, mp4AudioCodec, sniffSampleRate } from '../../src/audio/sniff';
 import { wavHeader } from '../../src/audio/wav';
 import { computePeaks } from '../../src/audio/decode';
 import { makeBuffer } from '../../src/audio/types';
@@ -83,5 +84,34 @@ describe('computePeaks', () => {
     expect(peaks[1]).toBeCloseTo(0.8, 5);
     expect(peaks[90]).toBeCloseTo(0.3, 5);
     expect(peaks[50]).toBe(0);
+  });
+});
+
+describe('m4a detection', () => {
+  const fixture = (name: string): Uint8Array => new Uint8Array(readFileSync(new URL(`../fixtures/${name}`, import.meta.url)));
+
+  it('names the audio codec of real m4a files', () => {
+    expect(isMp4(fixture('tone-aac.m4a'))).toBe(true);
+    expect(mp4AudioCodec(fixture('tone-aac.m4a'))).toBe('mp4a');
+    expect(mp4AudioCodec(fixture('tone-alac.m4a'))).toBe('alac');
+    expect(sniffSampleRate(fixture('tone-alac.m4a'))).toBe(22050);
+  });
+
+  it('spots copy-protected audio tracks', () => {
+    const hdlr = box('hdlr', [0, 0, 0, 0], [0, 0, 0, 0], ascii('soun'), new Array(12).fill(0));
+    const stsd = box('stsd', [0, 0, 0, 0], u32be(1), box('enca', new Array(28).fill(0)));
+    const file = [
+      ...box('ftyp', ascii('M4A '), u32be(0)),
+      ...box('moov', box('trak', box('mdia', hdlr, box('minf', box('stbl', stsd))))),
+    ];
+    expect(mp4AudioCodec(new Uint8Array(file))).toBe('enca');
+  });
+
+  it('recognises raw ADTS streams, with or without an ID3 tag', () => {
+    expect(isAdts(new Uint8Array([0xff, 0xf1, 0x50, 0x80]))).toBe(true);
+    const id3 = [...ascii('ID3'), 4, 0, 0, 0, 0, 0, 2, 0, 0, 0xff, 0xf9, 0x50];
+    expect(isAdts(new Uint8Array(id3))).toBe(true);
+    expect(isAdts(new Uint8Array([0xff, 0xfb, 0x90, 0x00]))).toBe(false); // MP3 frame
+    expect(isMp4(new Uint8Array(ascii('RIFF....WAVE')))).toBe(false);
   });
 });

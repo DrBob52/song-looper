@@ -10,7 +10,10 @@ Everything runs in the browser. There is no server, no API key and nothing is up
 ## What it does
 
 - Loads mp3, wav, m4a/aac, flac, ogg or anything else your browser's `decodeAudioData` accepts, and keeps the
-  file's native sample rate and channel count for rendering and export.
+  file's native sample rate and channel count for rendering and export. When the browser can't decode an m4a or
+  .aac file (Chrome and Firefox never decode Apple Lossless, and some Chromium and Linux Firefox builds lack AAC),
+  a bundled decoder takes over. It loads only when needed. Copy-protected files (Apple Music downloads) get a
+  clear error, since nothing can decode them.
 - Analyses the song in a Web Worker: beats, tempo (with a half/double override), bars, sections (A, B, C, ...)
   and a ranked list of loop suggestions, each with a one-line reason.
 - Shows the waveform (wavesurfer.js v7 + Regions plugin) with the beat and bar grid and section markers. Drag on
@@ -160,5 +163,7 @@ scripts/     make-demo-song.ts
 ## Licences
 
 No licence has been chosen for this repository's own code yet. Runtime dependencies: `wavesurfer.js` (BSD-3-Clause),
-`fft.js` (MIT) and `@soundtouchjs/*` (MPL-2.0). Essentia.js (AGPL) and Rubber Band (GPL, needs COOP/COEP headers that
+`fft.js` (MIT), `@soundtouchjs/*` (MPL-2.0) and `@audio/decode-aac` (the m4a fallback: its AAC decoder is FAAD2
+under **GPL-2.0**, its ALAC decoder Apache-2.0). If you publish this app under a licence that isn't GPL-compatible,
+swap that fallback for an LGPL one such as an FFmpeg WASM build. Essentia.js (AGPL) and Rubber Band (GPL, needs COOP/COEP headers that
 GitHub Pages cannot set) are deliberately not used.

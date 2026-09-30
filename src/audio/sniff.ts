@@ -117,3 +117,63 @@ function sniffMp4(b: Uint8Array): number | null {
   walk(0, b.length, { timescale: null, audio: false });
   return found;
 }
+
+/** True when the bytes start with an ISO-BMFF/QuickTime `ftyp` box (m4a, mp4, mov). */
+export function isMp4(b: Uint8Array): boolean {
+  return b.length >= 12 && ascii(b, 4, 4) === 'ftyp';
+}
+
+/** True for a raw ADTS AAC stream (.aac), optionally behind an ID3 tag. */
+export function isAdts(b: Uint8Array): boolean {
+  let pos = 0;
+  if (ascii(b, 0, 3) === 'ID3' && b.length > 10) {
+    pos = 10 + ((b[6]! << 21) | (b[7]! << 14) | (b[8]! << 7) | b[9]!);
+  }
+  return pos + 1 < b.length && b[pos] === 0xff && (b[pos + 1]! & 0xf6) === 0xf0;
+}
+
+/**
+ * The sample-entry code of the first audio track in an MP4 (`mp4a` for AAC,
+ * `alac` for Apple Lossless, `enca`/`drms` for copy-protected audio), or null.
+ */
+export function mp4AudioCodec(b: Uint8Array): string | null {
+  if (!isMp4(b)) return null;
+  const CONTAINERS = new Set(['moov', 'trak', 'mdia', 'minf', 'stbl']);
+  let found: string | null = null;
+  try {
+    const walk = (start: number, end: number, ctx: { audio: boolean; codec: string | null }): void => {
+      let pos = start;
+      while (pos + 8 <= end && found === null) {
+        let size = u32be(b, pos);
+        const type = ascii(b, pos + 4, 4);
+        let header = 8;
+        if (size === 1) {
+          size = u32be(b, pos + 12);
+          header = 16;
+        } else if (size === 0) {
+          size = end - pos;
+        }
+        if (size < header) return;
+        const bodyStart = pos + header;
+        const bodyEnd = Math.min(end, pos + size);
+        if (type === 'trak') {
+          const trackCtx = { audio: false, codec: null as string | null };
+          walk(bodyStart, bodyEnd, trackCtx);
+          if (trackCtx.audio && trackCtx.codec) found = trackCtx.codec;
+        } else if (CONTAINERS.has(type)) {
+          walk(bodyStart, bodyEnd, ctx);
+        } else if (type === 'hdlr') {
+          ctx.audio = ascii(b, bodyStart + 8, 4) === 'soun';
+        } else if (type === 'stsd') {
+          // version/flags (4) + entry count (4), then the first entry's size and type
+          if (bodyStart + 16 <= bodyEnd) ctx.codec = ascii(b, bodyStart + 12, 4);
+        }
+        pos += size;
+      }
+    };
+    walk(0, b.length, { audio: false, codec: null });
+  } catch {
+    return null;
+  }
+  return found;
+}
