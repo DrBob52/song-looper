@@ -229,7 +229,7 @@ export class WaveformView {
       tag.textContent = s.label;
       tag.title = s.hint ? `Section ${s.label} (${s.hint})` : `Section ${s.label}`;
       tag.style.cssText =
-        'position:absolute;top:0;left:2px;font:600 10px/1.2 system-ui,sans-serif;padding:1px 4px;border-radius:0 0 4px 0;background:var(--section, #f59e0b);color:#111;';
+        'position:absolute;bottom:0;left:0;font:600 10px/1.2 system-ui,sans-serif;padding:1px 4px;border-radius:0 4px 0 0;background:var(--section, #f59e0b);color:#111;';
       line.appendChild(tag);
       overlay.appendChild(line);
     }

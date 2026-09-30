@@ -1,3 +1,4 @@
+import { formatChannels, formatRate } from '../util/format';
 import { formatTime } from '../util/time';
 import { clear, h } from './dom';
 
@@ -17,6 +18,7 @@ export class Dropzone {
   private fill: HTMLElement;
   private label: HTMLElement;
   private banner: HTMLElement;
+  private warning: HTMLElement;
 
   constructor(private onFile: (file: File) => void) {
     this.input = h('input', {
@@ -70,7 +72,8 @@ export class Dropzone {
       this.label,
     ]);
     this.banner = h('div', { class: 'banner error', attrs: { role: 'alert', hidden: true, 'data-testid': 'error' } });
-    this.el = h('section', { attrs: { 'aria-label': 'Load a song' } }, [this.zone, this.input, this.progress, this.banner]);
+    this.warning = h('div', { class: 'banner warn', attrs: { role: 'status', hidden: true, 'data-testid': 'warning' } });
+    this.el = h('section', { attrs: { 'aria-label': 'Load a song' } }, [this.zone, this.input, this.progress, this.banner, this.warning]);
     this.showEmpty();
   }
 
@@ -89,12 +92,11 @@ export class Dropzone {
   showFile(info: FileInfo): void {
     this.zone.classList.add('compact');
     clear(this.zone);
-    const rate = `${(info.sampleRate / 1000).toFixed(info.sampleRate % 1000 === 0 ? 0 : 1)} kHz`;
     this.zone.append(
       h('div', { class: 'dz-title', text: info.name, attrs: { 'data-testid': 'file-name' } }),
       h('div', {
         class: 'dz-sub mono',
-        text: `${formatTime(info.duration)} · ${rate} · ${info.channels === 1 ? 'mono' : info.channels === 2 ? 'stereo' : `${info.channels} ch`}`,
+        text: `${formatTime(info.duration)} · ${formatRate(info.sampleRate)} · ${formatChannels(info.channels)}`,
         attrs: { 'data-testid': 'file-meta' },
       }),
       h('div', { class: 'dz-sub', text: 'Drop or click to choose another song' }),
@@ -119,6 +121,11 @@ export class Dropzone {
 
   hideProgress(): void {
     this.progress.hidden = true;
+  }
+
+  showWarning(message: string | null): void {
+    this.warning.hidden = !message;
+    this.warning.textContent = message ?? '';
   }
 
   showError(message: string | null): void {

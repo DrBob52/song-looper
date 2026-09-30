@@ -69,7 +69,7 @@ test('several loops, target length mode and the extended timeline strip', async 
 
   // clicking the strip switches to the extended preview and seeks there
   const tl = await page.getByTestId('timeline').boundingBox();
-  await page.mouse.click(tl!.x + tl!.width * 0.5, tl!.y + tl!.height / 2);
+  await page.getByTestId('timeline').click({ position: { x: tl!.width * 0.5, y: tl!.height / 2 } });
   await expect(page.getByTestId('mode-extended')).toHaveClass(/active/);
   await expect(page.getByTestId('render-status')).toHaveText('');
   await expect.poll(async () => (await page.getByTestId('time').textContent()) ?? '').toContain(`/ ${Math.floor(ext / 60)}:`);

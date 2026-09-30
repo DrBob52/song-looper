@@ -1,7 +1,7 @@
 import type { Page } from '@playwright/test';
 import { encodeWavBytes } from '../../src/audio/wav';
 import type { SynthSongOptions } from '../fixtures/synth';
-import { synthSong } from '../fixtures/synth';
+import { clickTrack, synthSong } from '../fixtures/synth';
 
 export interface Fixture {
   name: string;
@@ -125,4 +125,26 @@ export async function waitForAnalysis(page: Page): Promise<void> {
     undefined,
     { timeout: 60_000 },
   );
+}
+
+/** Wrap raw channels as a 16-bit WAV fixture. */
+export async function wavFixture(
+  channels: Float32Array[],
+  sampleRate: number,
+  name: string,
+): Promise<Fixture> {
+  const bytes = await encodeWavBytes(channels, sampleRate, { bitDepth: 16, dither: false });
+  return {
+    name,
+    mimeType: 'audio/wav',
+    buffer: Buffer.from(bytes),
+    duration: channels[0]!.length / sampleRate,
+    sampleRate,
+  };
+}
+
+/** A plain click-track WAV at `bpm`, `seconds` long (stereo, 44.1 kHz). */
+export async function clickTrackFixture(bpm: number, seconds: number): Promise<Fixture> {
+  const { samples } = clickTrack(bpm, seconds, 44100, 0.5);
+  return wavFixture([samples, samples], 44100, `clicks-${bpm}.wav`);
 }

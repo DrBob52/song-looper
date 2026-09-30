@@ -64,7 +64,8 @@ body {
 .app {
   max-width: 980px;
   margin: 0 auto;
-  padding: 16px 16px 96px;
+  /* room for the sticky transport bar, so the last card is never hidden behind it */
+  padding: 16px 16px 190px;
   display: grid;
   gap: 14px;
 }
@@ -398,7 +399,7 @@ kbd {
 
 @media (max-width: 480px) {
   .app {
-    padding: 10px 10px 110px;
+    padding: 10px 10px 200px;
     gap: 10px;
   }
   .card {
@@ -544,8 +545,11 @@ dialog.export-dialog::backdrop {
   gap: 8px 10px;
 }
 
-.transport-extra:empty {
-  display: none;
+.transport-details > summary {
+  cursor: pointer;
+  color: var(--muted);
+  font-size: 0.85rem;
+  margin-top: 6px;
 }
 
 .transport-extra {

@@ -16,6 +16,8 @@ export interface SuggestionsView {
   running: boolean;
   failed: boolean;
   regions: LoopRegion[];
+  /** Optional names for the candidates from a LabelProvider (same order; empty string = none). */
+  labels: string[];
   /** Key of the span being previewed (see suggestionKey). */
   previewingKey: string | null;
   duration: number;
@@ -114,6 +116,7 @@ export class SuggestionsPanel {
         h('div', { class: 'suggestion-rank', text: String(index + 1) }),
         h('div', { class: 'suggestion-main' }, [
           h('div', { class: 'suggestion-title' }, [
+            view.labels[index] ? h('strong', { text: view.labels[index] }) : null,
             h('span', { class: 'mono', text: `${formatTime(c.start, 1)} – ${formatTime(c.end, 1)}` }),
             h('span', { class: 'muted small', text: `${formatBars(c.bars)} · ${(c.end - c.start).toFixed(1)} s` }),
             h('span', {

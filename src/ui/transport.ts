@@ -26,6 +26,8 @@ export class Transport {
   private speedLabel: HTMLElement;
   private pitchLabel: HTMLElement;
   private resetBtn: HTMLButtonElement;
+  private details: HTMLDetailsElement;
+  private detailsSummary: HTMLElement;
   /** Extra controls (speed/pitch) are appended here by the app. */
   readonly extra: HTMLElement;
 
@@ -82,6 +84,10 @@ export class Transport {
       ]),
       this.resetBtn,
     ]);
+    this.detailsSummary = h('summary', { text: 'Speed & pitch' });
+    this.details = h('details', { class: 'transport-details' }, [this.detailsSummary, this.extra]);
+    // Wide screens show the controls; small screens start collapsed to keep the sticky bar short.
+    this.details.open = window.matchMedia('(min-width: 640px)').matches;
     this.el = h('section', { class: 'transport', attrs: { 'aria-label': 'Transport' } }, [
       h('div', { class: 'row' }, [
         h('div', { class: 'segmented', attrs: { role: 'group', 'aria-label': 'Play mode' } }, [
@@ -94,7 +100,7 @@ export class Transport {
         h('span', { class: 'grow' }),
         this.exportBtn,
       ]),
-      this.extra,
+      this.details,
     ]);
     this.setMode('original');
     this.setSpeedPitch(1, 0);
@@ -108,7 +114,9 @@ export class Transport {
     this.speedInput.value = String(speed);
     this.speedLabel.textContent = `${speed.toFixed(2)}x`;
     this.pitchLabel.textContent = `${semitones > 0 ? '+' : ''}${semitones}`;
-    this.resetBtn.disabled = Math.abs(speed - 1) < 1e-6 && semitones === 0;
+    const neutral = Math.abs(speed - 1) < 1e-6 && semitones === 0;
+    this.resetBtn.disabled = neutral;
+    this.detailsSummary.textContent = neutral ? 'Speed & pitch' : `Speed & pitch (${speed.toFixed(2)}x, ${semitones > 0 ? '+' : ''}${semitones})`;
   }
 
   setMode(mode: PlayMode): void {
@@ -129,6 +137,14 @@ export class Transport {
 
   setStatus(text: string): void {
     this.status.textContent = text;
+  }
+
+  /** Disable the speed/pitch controls when the browser has no AudioWorklet. */
+  setSpeedPitchAvailable(available: boolean): void {
+    this.speedInput.disabled = !available;
+    for (const b of this.extra.querySelectorAll('button')) (b as HTMLButtonElement).disabled = !available;
+    this.extra.title = available ? '' : 'Speed and pitch need AudioWorklet support, which this browser does not have.';
+    if (!available) this.detailsSummary.textContent = 'Speed & pitch (not supported in this browser)';
   }
 
   setEnabled(enabled: boolean): void {

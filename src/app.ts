@@ -14,6 +14,8 @@ import {
   planKey,
 } from './audio/render';
 import { RenderClient, SupersededError } from './audio/renderClient';
+import { noopLabelProvider } from './label/provider';
+import type { LabelProvider } from './label/provider';
 import { isNeutral, stretchedLength } from './audio/stretch';
 import { solveRepeats } from './audio/target';
 import { downloadBlob, estimateWavSize } from './audio/wav';
@@ -34,6 +36,7 @@ import { TimelineStrip } from './ui/timelineStrip';
 import { Transport } from './ui/transport';
 import type { PlayMode } from './ui/transport';
 import { SELECTION_ID, WaveformView } from './ui/waveform';
+import { formatChannels, formatRate } from './util/format';
 import { formatTime } from './util/time';
 import { createStore } from './util/store';
 
@@ -56,6 +59,8 @@ export interface AppState {
   /** Playback speed factor (tempo only) and pitch shift in semitones, for the preview and optionally the export. */
   speed: number;
   pitch: number;
+  /** Optional candidate names from the label provider. */
+  candidateLabels: string[];
   lengthMode: LengthMode;
   /** Target extended length in seconds (used in target mode). */
   targetSeconds: number;
@@ -101,6 +106,7 @@ export class App {
     grid: emptyGrid(),
     speed: 1,
     pitch: 0,
+    candidateLabels: [],
     lengthMode: 'repeats',
     targetSeconds: 0,
   });
@@ -110,6 +116,8 @@ export class App {
   private analysisControls: AnalysisControls;
   private suggestionsPanel: SuggestionsPanel;
   private timelineStrip: TimelineStrip;
+  /** Swap in an LLM-backed labeller here later; v1 ships the no-op one. */
+  labelProvider: LabelProvider = noopLabelProvider;
   private dropzone: Dropzone;
   private transport: Transport;
   private regionsPanel: RegionsPanel;
@@ -138,6 +146,10 @@ export class App {
       onResetSpeedPitch: () => this.setSpeedPitch(1, 0),
     });
     this.transport.setEnabled(false);
+    if (typeof AudioWorkletNode === 'undefined') this.transport.setSpeedPitchAvailable(false);
+    if (typeof AudioContext === 'undefined' || typeof OfflineAudioContext === 'undefined') {
+      this.dropzone.showError('This browser does not support the Web Audio features Song Looper needs. Try a current Chrome, Edge, Firefox or Safari.');
+    }
     this.regionsPanel = new RegionsPanel({
       onAdd: () => this.addLoop(),
       onSelect: (id) => this.selectRegion(id),
@@ -267,9 +279,11 @@ export class App {
       s.analysisState !== prev.analysisState ||
       s.regions !== prev.regions ||
       s.previewingId !== prev.previewingId ||
+      s.candidateLabels !== prev.candidateLabels ||
       s.song !== prev.song
     ) {
       this.suggestionsPanel.update({
+        labels: s.candidateLabels,
         analysis: s.analysis,
         running: s.analysisState === 'running',
         failed: s.analysisState === 'error',
@@ -392,6 +406,7 @@ export class App {
     const token = ++this.loadToken;
     this.stopEverything();
     this.dropzone.showError(null);
+    this.dropzone.showWarning(null);
     this.dropzone.setBusy(true);
     this.dropzone.showProgress('Decoding audio…', null);
     try {
@@ -440,6 +455,11 @@ export class App {
       targetSeconds: Math.ceil(song.duration),
     });
     this.dropzone.showFile(song);
+    this.dropzone.showWarning(
+      song.duration > ANALYSIS_CONFIG.limits.longSongSeconds
+        ? `This song is ${Math.round(song.duration / 60)} minutes long. Analysis, preview and export may be slow and use a lot of memory, but the app will still try.`
+        : null,
+    );
     this.songPanel.hidden = false;
     this.transport.setEnabled(true);
 
@@ -504,7 +524,15 @@ export class App {
   private applyAnalysis(analysis: Analysis): void {
     const song = this.store.get().song;
     if (!song) return;
-    this.store.set({ analysis, analysisState: 'done', grid: makeGrid(analysis, song.duration) });
+    this.store.set({ analysis, analysisState: 'done', grid: makeGrid(analysis, song.duration), candidateLabels: [] });
+    // Optional labeller (no-op by default); a failure only means "no labels".
+    const token = this.loadToken;
+    this.labelProvider
+      .label(analysis, analysis.candidates)
+      .then((labels) => {
+        if (token === this.loadToken && this.store.get().analysis === analysis) this.store.set({ candidateLabels: labels });
+      })
+      .catch(() => undefined);
   }
 
   private async updateAnalysis(change: AnalysisUpdate): Promise<void> {
@@ -851,7 +879,7 @@ export class App {
       defaultName: `${base} (extended).wav`,
       speedPitchNeutral: neutral,
       speedPitchLabel: parts.join(', '),
-      format: `${(song.sampleRate / 1000).toFixed(song.sampleRate % 1000 === 0 ? 0 : 1)} kHz ${song.channels === 1 ? 'mono' : song.channels === 2 ? 'stereo' : `${song.channels} ch`}`,
+      format: `${formatRate(song.sampleRate)} ${formatChannels(song.channels)}`,
       estimate: (depth, bake) => {
         const frames = bake ? stretchedLength(Math.round(ext * song.sampleRate), speed) : Math.round(ext * song.sampleRate);
         return { bytes: estimateWavSize(frames, song.channels, depth), seconds: frames / song.sampleRate };
