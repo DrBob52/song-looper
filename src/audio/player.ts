@@ -1,6 +1,3 @@
-import type { AudioBufferLike } from './types';
-import { channelsOf } from './types';
-
 export interface LoopRange {
   start: number;
   end: number;
@@ -18,8 +15,12 @@ export class Player {
   private master: GainNode | null = null;
   private buffer: AudioBuffer | null = null;
   private source: AudioBufferSourceNode | null = null;
-  private snippet: AudioBufferSourceNode | null = null;
-  private snippetDone: (() => void) | null = null;
+  private aux: AudioBufferSourceNode | null = null;
+  private auxDone: (() => void) | null = null;
+  private auxStartCtx = 0;
+  private auxOffset = 0;
+  private auxDuration = 0;
+  private auxLoop: LoopRange | null = null;
   private playing = false;
   private startCtxTime = 0;
   private startOffset = 0;
@@ -91,7 +92,7 @@ export class Player {
     if (!this.buffer) return;
     const ctx = this.getContext();
     if (ctx.state === 'suspended') await ctx.resume();
-    this.stopSnippet();
+    this.stopAux(false);
     this.stopSource();
     if (loop !== undefined) this.loop = loop;
     let offset = from ?? this.pausedAt;
@@ -137,7 +138,7 @@ export class Player {
   stop(): void {
     const wasPlaying = this.playing;
     this.stopSource();
-    this.stopSnippet();
+    this.stopAux(false);
     this.loop = null;
     this.playing = false;
     this.pausedAt = 0;
@@ -165,36 +166,65 @@ export class Player {
     }
   }
 
-  /** Play a short standalone buffer (seam audition). Resolves when it ends or is stopped. */
-  async playSnippet(buffer: AudioBufferLike): Promise<void> {
+  /**
+   * Play a standalone buffer (seam audition or loop preview) instead of the main buffer.
+   * Resolves when it ends or is stopped. With `loopStart`/`loopEnd` it repeats until stopped.
+   */
+  async playAux(
+    buffer: { channels: Float32Array[]; sampleRate: number },
+    opts: { loopStart?: number; loopEnd?: number; offset?: number } = {},
+  ): Promise<void> {
     const ctx = this.getContext();
     if (ctx.state === 'suspended') await ctx.resume();
     this.pause();
-    this.stopSnippet();
-    const chans = channelsOf(buffer);
-    const buf = ctx.createBuffer(chans.length, Math.max(1, buffer.length), buffer.sampleRate);
-    chans.forEach((c, i) => buf.copyToChannel(c as Float32Array<ArrayBuffer>, i));
+    this.stopAux(false);
+    const { channels, sampleRate } = buffer;
+    const buf = ctx.createBuffer(channels.length, Math.max(1, channels[0]?.length ?? 1), sampleRate);
+    channels.forEach((c, i) => buf.copyToChannel(c as Float32Array<ArrayBuffer>, i));
     const src = ctx.createBufferSource();
     src.buffer = buf;
+    const looping = opts.loopStart !== undefined && opts.loopEnd !== undefined;
+    if (looping) {
+      src.loop = true;
+      src.loopStart = opts.loopStart!;
+      src.loopEnd = opts.loopEnd!;
+    }
     src.connect(this.master!);
-    this.snippet = src;
+    this.aux = src;
+    this.auxStartCtx = ctx.currentTime;
+    this.auxOffset = opts.offset ?? (looping ? opts.loopStart! : 0);
+    this.auxLoop = looping ? { start: opts.loopStart!, end: opts.loopEnd! } : null;
+    this.auxDuration = buf.duration;
+    this.emit('play');
     await new Promise<void>((resolve) => {
-      this.snippetDone = resolve;
+      this.auxDone = resolve;
       src.onended = () => {
-        if (this.snippet === src) this.snippet = null;
-        this.snippetDone = null;
+        if (this.aux === src) {
+          this.aux = null;
+          this.auxDone = null;
+          this.emit('pause');
+        }
         resolve();
       };
-      src.start();
+      src.start(0, this.auxOffset);
     });
   }
 
-  stopSnippet(): void {
-    if (!this.snippet) return;
-    const s = this.snippet;
-    const done = this.snippetDone;
-    this.snippet = null;
-    this.snippetDone = null;
+  /** Position inside the aux buffer, in seconds. */
+  getAuxTime(): number {
+    if (!this.aux || !this.ctx) return 0;
+    let pos = this.auxOffset + (this.ctx.currentTime - this.auxStartCtx);
+    const loop = this.auxLoop;
+    if (loop && pos >= loop.end) pos = loop.start + ((pos - loop.start) % (loop.end - loop.start));
+    return Math.min(pos, this.auxDuration);
+  }
+
+  stopAux(notify = true): void {
+    const s = this.aux;
+    if (!s) return;
+    const done = this.auxDone;
+    this.aux = null;
+    this.auxDone = null;
     s.onended = null;
     try {
       s.stop();
@@ -202,10 +232,11 @@ export class Player {
       /* already stopped */
     }
     done?.();
+    if (notify) this.emit('pause');
   }
 
-  isSnippetPlaying(): boolean {
-    return this.snippet !== null;
+  isAuxPlaying(): boolean {
+    return this.aux !== null;
   }
 
   private stopSource(): void {

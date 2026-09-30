@@ -1,0 +1,212 @@
+import { RENDER_CONFIG } from '../audio/config';
+import type { BitDepth } from '../audio/wav';
+import { formatTime } from '../util/time';
+import { clear, h } from './dom';
+
+export interface ExportOptions {
+  filename: string;
+  bitDepth: BitDepth;
+  applySpeedPitch: boolean;
+}
+
+export interface ExportInfo {
+  defaultName: string;
+  /** Size and duration of the file for the given settings. */
+  estimate(bitDepth: BitDepth, applySpeedPitch: boolean): { bytes: number; seconds: number };
+  speedPitchNeutral: boolean;
+  /** e.g. "1.10x speed, +2 semitones" */
+  speedPitchLabel: string;
+  /** e.g. "44.1 kHz stereo" */
+  format: string;
+}
+
+export function formatBytes(bytes: number): string {
+  if (bytes >= 1024 ** 3) return `${(bytes / 1024 ** 3).toFixed(2)} GB`;
+  if (bytes >= 1024 ** 2) return `${(bytes / 1024 ** 2).toFixed(1)} MB`;
+  return `${Math.max(1, Math.round(bytes / 1024))} KB`;
+}
+
+export function sanitizeFilename(name: string): string {
+  let n = [...name]
+    .map((ch) => (ch.charCodeAt(0) < 32 || '\\/:*?"<>|'.includes(ch) ? '_' : ch))
+    .join('')
+    .trim();
+  if (!n) n = 'extended';
+  if (!/\.wav$/i.test(n)) n += '.wav';
+  return n;
+}
+
+/** Export dialog: bit depth, optional speed/pitch baking, file name, progress. */
+export class ExportDialog {
+  readonly el: HTMLDialogElement;
+  private info: ExportInfo | null = null;
+  private nameInput: HTMLInputElement;
+  private bake: HTMLInputElement;
+  private bakeHelp: HTMLElement;
+  private depthInputs: HTMLInputElement[] = [];
+  private estimateEl: HTMLElement;
+  private warnEl: HTMLElement;
+  private errorEl: HTMLElement;
+  private progress: HTMLElement;
+  private fill: HTMLElement;
+  private progressLabel: HTMLElement;
+  private exportBtn: HTMLButtonElement;
+  private cancelBtn: HTMLButtonElement;
+  private busy = false;
+
+  constructor(
+    private cb: { onExport(opts: ExportOptions): void | Promise<void>; onCancel(): void },
+  ) {
+    this.nameInput = h('input', { attrs: { type: 'text', 'aria-label': 'File name', 'data-testid': 'export-name' }, class: 'grow' });
+    this.bake = h('input', {
+      attrs: { type: 'checkbox', 'data-testid': 'export-bake' },
+      on: { change: () => this.refresh() },
+    });
+    this.bakeHelp = h('div', { class: 'muted small' });
+    const depths: [BitDepth, string][] = [
+      [16, '16-bit PCM (default)'],
+      [24, '24-bit PCM'],
+      [32, '32-bit float'],
+    ];
+    const depthRow = h('div', { class: 'col' });
+    for (const [depth, label] of depths) {
+      const input = h('input', {
+        attrs: { type: 'radio', name: 'bitdepth', value: depth, 'data-testid': `depth-${depth}` },
+        on: { change: () => this.refresh() },
+      });
+      input.checked = depth === 16;
+      this.depthInputs.push(input);
+      depthRow.append(h('label', { class: 'field' }, [input, h('span', { text: label })]));
+    }
+    this.estimateEl = h('div', { class: 'mono small', attrs: { 'data-testid': 'export-estimate' } });
+    this.warnEl = h('div', { class: 'banner warn', attrs: { hidden: true, 'data-testid': 'export-warning' } });
+    this.errorEl = h('div', { class: 'banner error', attrs: { hidden: true, role: 'alert', 'data-testid': 'export-error' } });
+    this.fill = h('div', { class: 'fill' });
+    this.progressLabel = h('div', { class: 'label' });
+    this.progress = h('div', { class: 'progress', attrs: { hidden: true, 'data-testid': 'export-progress' } }, [
+      h('div', { class: 'track' }, [this.fill]),
+      this.progressLabel,
+    ]);
+    this.exportBtn = h('button', {
+      class: 'btn primary',
+      text: 'Export',
+      attrs: { type: 'submit', 'data-testid': 'export-confirm' },
+    });
+    this.cancelBtn = h('button', {
+      class: 'btn',
+      text: 'Cancel',
+      attrs: { type: 'button', 'data-testid': 'export-cancel' },
+      on: { click: () => this.requestClose() },
+    });
+    const form = h(
+      'form',
+      {
+        class: 'export-form',
+        on: {
+          submit: (e) => {
+            e.preventDefault();
+            void this.submit();
+          },
+        },
+      },
+      [
+        h('h2', { text: 'Export WAV' }),
+        h('label', { class: 'field' }, [h('span', { text: 'File name' }), this.nameInput]),
+        h('fieldset', {}, [h('legend', { text: 'Bit depth' }), depthRow]),
+        h('div', {}, [
+          h('label', { class: 'field' }, [this.bake, h('span', { text: 'Apply speed and pitch changes' })]),
+          this.bakeHelp,
+        ]),
+        this.estimateEl,
+        this.warnEl,
+        this.errorEl,
+        this.progress,
+        h('div', { class: 'row actions' }, [h('span', { class: 'grow' }), this.cancelBtn, this.exportBtn]),
+      ],
+    );
+    this.el = h('dialog', { class: 'export-dialog', attrs: { 'aria-label': 'Export WAV', 'data-testid': 'export-dialog' } }, [form]);
+    this.el.addEventListener('cancel', (e) => {
+      if (this.busy) e.preventDefault();
+    });
+    this.el.addEventListener('close', () => this.setBusy(false));
+  }
+
+  open(info: ExportInfo): void {
+    this.info = info;
+    this.nameInput.value = info.defaultName;
+    this.bake.checked = false;
+    this.bake.disabled = info.speedPitchNeutral;
+    this.bakeHelp.textContent = info.speedPitchNeutral
+      ? 'Speed and pitch are at their neutral settings, so there is nothing to apply.'
+      : `Off: the file is the original sound. On: render ${info.speedPitchLabel} into the file.`;
+    this.errorEl.hidden = true;
+    this.progress.hidden = true;
+    this.setBusy(false);
+    this.refresh();
+    if (!this.el.open) this.el.showModal();
+    this.nameInput.focus();
+    this.nameInput.select();
+  }
+
+  private selectedDepth(): BitDepth {
+    const checked = this.depthInputs.find((i) => i.checked);
+    return (Number(checked?.value ?? 16) as BitDepth) || 16;
+  }
+
+  private refresh(): void {
+    if (!this.info) return;
+    const est = this.info.estimate(this.selectedDepth(), this.bake.checked && !this.bake.disabled);
+    this.estimateEl.textContent = `About ${formatBytes(est.bytes)} · ${formatTime(est.seconds)} · ${this.info.format}`;
+    const big = est.bytes > RENDER_CONFIG.largeFileBytes;
+    this.warnEl.hidden = !big;
+    if (big) {
+      this.warnEl.textContent = `This file will be large (${formatBytes(est.bytes)}). Rendering may be slow and use a lot of memory. 16-bit or a shorter length makes it smaller.`;
+    }
+  }
+
+  private async submit(): Promise<void> {
+    if (this.busy) return;
+    this.errorEl.hidden = true;
+    this.setBusy(true);
+    try {
+      await this.cb.onExport({
+        filename: sanitizeFilename(this.nameInput.value),
+        bitDepth: this.selectedDepth(),
+        applySpeedPitch: this.bake.checked && !this.bake.disabled,
+      });
+      this.el.close();
+    } catch (err) {
+      this.showError(err instanceof Error ? err.message : String(err));
+      this.setBusy(false);
+    }
+  }
+
+  private requestClose(): void {
+    if (this.busy) return;
+    this.el.close();
+    this.cb.onCancel();
+  }
+
+  setBusy(busy: boolean): void {
+    this.busy = busy;
+    this.exportBtn.disabled = busy;
+    this.cancelBtn.disabled = busy;
+    this.nameInput.disabled = busy;
+    this.depthInputs.forEach((i) => (i.disabled = busy));
+    if (this.info) this.bake.disabled = busy || this.info.speedPitchNeutral;
+    if (!busy) this.progress.hidden = true;
+  }
+
+  setProgress(label: string, fraction: number | null): void {
+    this.progress.hidden = false;
+    this.progressLabel.textContent = label;
+    this.fill.style.width = fraction === null ? '100%' : `${Math.round(Math.max(0, Math.min(1, fraction)) * 100)}%`;
+    this.fill.style.opacity = fraction === null ? '0.35' : '1';
+  }
+
+  showError(message: string): void {
+    this.errorEl.hidden = false;
+    clear(this.errorEl);
+    this.errorEl.textContent = message;
+  }
+}

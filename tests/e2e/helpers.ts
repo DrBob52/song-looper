@@ -37,3 +37,69 @@ export async function loadFixture(page: Page, fixture: Fixture): Promise<void> {
   });
   await page.waitForSelector('[data-testid=song-panel]:not([hidden])');
 }
+
+export interface WavInfo {
+  format: number;
+  channels: number;
+  sampleRate: number;
+  bitsPerSample: number;
+  dataBytes: number;
+  duration: number;
+  riffSizeOk: boolean;
+}
+
+/** Parse the canonical 44-byte header of a WAV file. */
+export function parseWav(bytes: Buffer): WavInfo {
+  const str = (o: number, n: number): string => bytes.subarray(o, o + n).toString('latin1');
+  if (str(0, 4) !== 'RIFF' || str(8, 4) !== 'WAVE' || str(12, 4) !== 'fmt ' || str(36, 4) !== 'data') {
+    throw new Error('not a canonical WAV file');
+  }
+  const format = bytes.readUInt16LE(20);
+  const channels = bytes.readUInt16LE(22);
+  const sampleRate = bytes.readUInt32LE(24);
+  const bitsPerSample = bytes.readUInt16LE(34);
+  const dataBytes = bytes.readUInt32LE(40);
+  return {
+    format,
+    channels,
+    sampleRate,
+    bitsPerSample,
+    dataBytes,
+    duration: dataBytes / (channels * (bitsPerSample / 8)) / sampleRate,
+    riffSizeOk: bytes.readUInt32LE(4) === bytes.length - 8 && dataBytes === bytes.length - 44,
+  };
+}
+
+/** Decode WAV bytes with the browser's decodeAudioData; returns duration, channels and peak. */
+export async function decodeInBrowser(
+  page: Page,
+  bytes: Buffer,
+): Promise<{ duration: number; channels: number; sampleRate: number; peak: number }> {
+  return page.evaluate(async (b64) => {
+    const bin = atob(b64);
+    const arr = new Uint8Array(bin.length);
+    for (let i = 0; i < bin.length; i++) arr[i] = bin.charCodeAt(i);
+    const ctx = new OfflineAudioContext(1, 1, 44100);
+    const buf = await ctx.decodeAudioData(arr.buffer);
+    let peak = 0;
+    for (let c = 0; c < buf.numberOfChannels; c++) {
+      const d = buf.getChannelData(c);
+      for (let i = 0; i < d.length; i++) peak = Math.max(peak, Math.abs(d[i]!));
+    }
+    return { duration: buf.duration, channels: buf.numberOfChannels, sampleRate: buf.sampleRate, peak };
+  }, bytes.toString('base64'));
+}
+
+/** Drag across the waveform from `fromFrac` to `toFrac` of its width to make a selection. */
+export async function dragSelect(page: Page, fromFrac: number, toFrac: number): Promise<void> {
+  const box = await page.getByTestId('waveform').boundingBox();
+  if (!box) throw new Error('waveform not visible');
+  const y = box.y + box.height / 2;
+  const x0 = box.x + box.width * fromFrac;
+  const x1 = box.x + box.width * toFrac;
+  await page.mouse.move(x0, y);
+  await page.mouse.down();
+  const steps = 12;
+  for (let i = 1; i <= steps; i++) await page.mouse.move(x0 + ((x1 - x0) * i) / steps, y);
+  await page.mouse.up();
+}

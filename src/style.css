@@ -405,3 +405,156 @@ kbd {
     padding: 11px;
   }
 }
+
+/* ---- regions ---- */
+
+.region-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: grid;
+  gap: 8px;
+}
+
+.region {
+  display: flex;
+  gap: 10px;
+  padding: 9px 10px;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  background: var(--panel);
+  cursor: pointer;
+}
+
+.region.selected {
+  border-color: var(--accent);
+  background: var(--accent-soft);
+}
+
+.swatch {
+  flex: none;
+  width: 10px;
+  border-radius: 4px;
+  align-self: stretch;
+}
+
+.region-main {
+  flex: 1 1 auto;
+  min-width: 0;
+  display: grid;
+  gap: 8px;
+}
+
+.region-title {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 4px 12px;
+}
+
+.region-controls {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px 12px;
+}
+
+.region-controls .spacer {
+  flex: 1 1 0;
+}
+
+input.num {
+  width: 4.2em;
+  text-align: center;
+}
+
+.notice {
+  min-height: 1.4em;
+  font-size: 0.88rem;
+  color: var(--warn);
+}
+
+/* ---- export dialog ---- */
+
+dialog.export-dialog {
+  width: min(460px, calc(100vw - 24px));
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--panel);
+  color: var(--text);
+  padding: 16px;
+  box-shadow: 0 20px 60px rgba(0, 0, 0, 0.35);
+}
+
+dialog.export-dialog::backdrop {
+  background: rgba(0, 0, 0, 0.45);
+}
+
+.export-form {
+  display: grid;
+  gap: 12px;
+}
+
+.export-form h2 {
+  margin: 0;
+  font-size: 1.1rem;
+}
+
+.export-form fieldset {
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  margin: 0;
+  padding: 8px 12px 10px;
+}
+
+.export-form legend {
+  color: var(--muted);
+  font-size: 0.85rem;
+  padding: 0 4px;
+}
+
+.col {
+  display: grid;
+  gap: 4px;
+}
+
+.actions {
+  justify-content: flex-end;
+}
+
+.segmented {
+  display: inline-flex;
+}
+
+.segmented .btn {
+  border-radius: 0;
+  margin-left: -1px;
+}
+
+.segmented .btn:first-child {
+  border-radius: 8px 0 0 8px;
+  margin-left: 0;
+}
+
+.segmented .btn:last-child {
+  border-radius: 0 8px 8px 0;
+}
+
+.transport .row {
+  gap: 8px 10px;
+}
+
+.transport-extra:empty {
+  display: none;
+}
+
+.transport-extra {
+  margin-top: 8px;
+  padding-top: 8px;
+  border-top: 1px solid var(--border);
+}
+
+.big {
+  font-size: 1.35rem;
+  font-weight: 650;
+}
