@@ -3,6 +3,7 @@ import { renderExtended } from './render';
 import type { WorkerRequest, WorkerResponse } from './renderProtocol';
 import type { AudioBufferLike } from './types';
 import { makeBuffer } from './types';
+import { isNeutral, stretchChannels } from './stretch';
 import { encodeWav } from './wav';
 
 interface WorkerScope {
@@ -35,8 +36,10 @@ scope.onmessage = (ev) => {
         onProgress: (f) => progress('render', f),
       });
       const sampleRate = source.sampleRate;
-      // Speed/pitch baking is wired up with the SoundTouch integration.
-      void msg.stretch;
+      if (msg.stretch && !isNeutral(msg.stretch)) {
+        progress('stretch', 0);
+        channels = stretchChannels(channels, sampleRate, msg.stretch, (f) => progress('stretch', f));
+      }
       const blob = encodeWav(channels, sampleRate, {
         bitDepth: msg.bitDepth,
         onProgress: (f) => progress('encode', f),

@@ -167,13 +167,15 @@ export class ExportDialog {
   private async submit(): Promise<void> {
     if (this.busy) return;
     this.errorEl.hidden = true;
+    // Read the options before busy-mode disables the form controls.
+    const options: ExportOptions = {
+      filename: sanitizeFilename(this.nameInput.value),
+      bitDepth: this.selectedDepth(),
+      applySpeedPitch: this.bake.checked && !this.bake.disabled,
+    };
     this.setBusy(true);
     try {
-      await this.cb.onExport({
-        filename: sanitizeFilename(this.nameInput.value),
-        bitDepth: this.selectedDepth(),
-        applySpeedPitch: this.bake.checked && !this.bake.disabled,
-      });
+      await this.cb.onExport(options);
       this.el.close();
     } catch (err) {
       this.showError(err instanceof Error ? err.message : String(err));

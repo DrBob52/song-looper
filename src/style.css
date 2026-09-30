@@ -722,3 +722,22 @@ input[aria-invalid='true'] {
   pointer-events: none;
   border-radius: 2px;
 }
+
+.speed-field input[type='range'] {
+  width: 160px;
+}
+
+.pitch-label {
+  min-width: 2.6ch;
+  text-align: center;
+}
+
+@media (max-width: 480px) {
+  .speed-field {
+    flex: 1 1 100%;
+  }
+  .speed-field input[type='range'] {
+    flex: 1 1 auto;
+    width: auto;
+  }
+}

@@ -14,6 +14,7 @@ import {
   planKey,
 } from './audio/render';
 import { RenderClient, SupersededError } from './audio/renderClient';
+import { isNeutral, stretchedLength } from './audio/stretch';
 import { solveRepeats } from './audio/target';
 import { downloadBlob, estimateWavSize } from './audio/wav';
 import { barsBetween, emptyGrid, makeGrid, snapTime } from './grid';
@@ -52,6 +53,9 @@ export interface AppState {
   analysis: Analysis | null;
   analysisState: 'idle' | 'running' | 'done' | 'error';
   grid: Grid;
+  /** Playback speed factor (tempo only) and pitch shift in semitones, for the preview and optionally the export. */
+  speed: number;
+  pitch: number;
   lengthMode: LengthMode;
   /** Target extended length in seconds (used in target mode). */
   targetSeconds: number;
@@ -95,6 +99,8 @@ export class App {
     analysis: null,
     analysisState: 'idle',
     grid: emptyGrid(),
+    speed: 1,
+    pitch: 0,
     lengthMode: 'repeats',
     targetSeconds: 0,
   });
@@ -127,6 +133,9 @@ export class App {
       onTogglePlay: () => void this.togglePlay(),
       onMode: (m) => void this.setPlayMode(m),
       onExport: () => this.openExport(),
+      onSpeed: (v) => this.setSpeedPitch(v, this.store.get().pitch),
+      onPitch: (v) => this.setSpeedPitch(this.store.get().speed, v),
+      onResetSpeedPitch: () => this.setSpeedPitch(1, 0),
     });
     this.transport.setEnabled(false);
     this.regionsPanel = new RegionsPanel({
@@ -534,6 +543,17 @@ export class App {
     this.store.set({ regions: next, ...extra });
   }
 
+  /** Preview speed (tempo only, 0.5x to 1.5x) and pitch (-12 to +12 semitones). */
+  setSpeedPitch(speed: number, pitch: number): void {
+    const sp = Math.round(Math.min(1.5, Math.max(0.5, speed)) * 100) / 100;
+    const pt = Math.round(Math.min(12, Math.max(-12, pitch)));
+    this.store.set({ speed: sp, pitch: pt });
+    this.transport.setSpeedPitch(sp, pt);
+    void this.player.setSpeedPitch(sp, pt).catch((err: unknown) => {
+      this.notify(`Speed/pitch is not available: ${err instanceof Error ? err.message : String(err)}`);
+    });
+  }
+
   setLengthMode(mode: LengthMode): void {
     const { song, lengthMode, regions } = this.store.get();
     if (!song || mode === lengthMode) return;
@@ -815,32 +835,37 @@ export class App {
   // ---- export ------------------------------------------------------------------
 
   private openExport(): void {
-    const { song } = this.store.get();
+    const { song, speed, pitch } = this.store.get();
     if (!song) return;
     const ext = extendedDuration(this.plan(), song.duration);
     if (ext > MAX_EXTENDED_SECONDS) {
       this.notify(`The extended song is longer than ${MAX_EXTENDED_SECONDS / 60} minutes. Lower a repeat count before exporting.`);
       return;
     }
+    const neutral = isNeutral({ tempo: speed, pitchSemitones: pitch });
+    const parts: string[] = [];
+    if (Math.abs(speed - 1) > 1e-6) parts.push(`${speed.toFixed(2)}x speed`);
+    if (pitch !== 0) parts.push(`${pitch > 0 ? '+' : ''}${pitch} semitone${Math.abs(pitch) === 1 ? '' : 's'}`);
     const base = song.name.replace(/\.[^./\\]+$/, '');
     this.exportDialog.open({
       defaultName: `${base} (extended).wav`,
-      speedPitchNeutral: true,
-      speedPitchLabel: '',
+      speedPitchNeutral: neutral,
+      speedPitchLabel: parts.join(', '),
       format: `${(song.sampleRate / 1000).toFixed(song.sampleRate % 1000 === 0 ? 0 : 1)} kHz ${song.channels === 1 ? 'mono' : song.channels === 2 ? 'stereo' : `${song.channels} ch`}`,
-      estimate: (depth) => {
-        const frames = Math.round(ext * song.sampleRate);
-        return { bytes: estimateWavSize(frames, song.channels, depth), seconds: ext };
+      estimate: (depth, bake) => {
+        const frames = bake ? stretchedLength(Math.round(ext * song.sampleRate), speed) : Math.round(ext * song.sampleRate);
+        return { bytes: estimateWavSize(frames, song.channels, depth), seconds: frames / song.sampleRate };
       },
     });
   }
 
   private async doExport(opts: { filename: string; bitDepth: 16 | 24 | 32; applySpeedPitch: boolean }): Promise<void> {
-    const { seamMs } = this.store.get();
+    const { seamMs, speed, pitch } = this.store.get();
     this.exportDialog.setProgress('Rendering…', 0);
+    const stretch = opts.applySpeedPitch ? { tempo: speed, pitchSemitones: pitch } : null;
     const blob = await this.renderClient.export(
       this.plan(),
-      { crossfadeMs: seamMs, bitDepth: opts.bitDepth, stretch: null },
+      { crossfadeMs: seamMs, bitDepth: opts.bitDepth, stretch },
       (stage, pct) => {
         const label = stage === 'render' ? 'Rendering…' : stage === 'stretch' ? 'Applying speed and pitch…' : 'Encoding WAV…';
         this.exportDialog.setProgress(label, pct);
