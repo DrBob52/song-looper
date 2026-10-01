@@ -254,6 +254,14 @@ export const ANALYSIS_CONFIG = {
     level: { thresholdDb: 1.5, maxDb: 9 },
   },
 
+  /**
+   * SPEC-seams.md 4: when a loop's harmony is under `under`, look for a loop whose start is within `startBars` bars of
+   * its start and whose end is within `endBars` bars of its end, a whole number of bars long, with the best harmony
+   * (the candidate score breaks ties between harmonies within `tie` of each other). It is only offered when its
+   * harmony is at least `minHarmony` and `minGain` better.
+   */
+  nearby: { under: 0.5, startBars: 1, endBars: 2, minHarmony: 0.7, minGain: 0.2, tie: 0.01 },
+
   /** 10. Edge cases */
   limits: {
     /** Songs shorter than this (seconds) get no suggestions. */

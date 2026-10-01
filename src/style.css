@@ -530,8 +530,16 @@ kbd {
   color: var(--muted);
 }
 
-.seam-summary[hidden] {
+.seam-summary[hidden],
+.nearby[hidden] {
   display: none;
+}
+
+.nearby {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 4px 8px;
 }
 
 input.num {

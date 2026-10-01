@@ -100,6 +100,19 @@ export interface SeamRequest {
   maxEnd?: number;
 }
 
+/** A loop near the user's with a cleaner chord change at its seam (SPEC-seams.md 4). Only ever suggested. */
+export interface NearbyLoop {
+  /** Seconds, on beat times. */
+  start: number;
+  end: number;
+  startBeat: number;
+  endBeat: number;
+  bars: number;
+  /** Harmony of its seam, and the loop score (the tie-break) it would get as a suggestion. */
+  harmony: number;
+  score: number;
+}
+
 export interface SeamReport {
   id: string;
   /** The points the report was computed for (the app ignores it if the loop has moved since). */
@@ -118,4 +131,6 @@ export interface SeamReport {
   chip: SeamChip;
   /** How to play the loop (rotation, alignment, fade, level); null when smoothing is off. */
   plan: SeamPlan | null;
+  /** A nearby loop with a cleaner chord change, when this loop's harmony is poor and one exists. */
+  nearby: NearbyLoop | null;
 }

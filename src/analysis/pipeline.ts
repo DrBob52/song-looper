@@ -8,13 +8,14 @@ import type { BeatFeatures, FrameData } from './features';
 import { buildHarmonyModel, chromaSimilarity } from './harmony';
 import type { ChromaSimilarity, HarmonyModel } from './harmony';
 import { SeamAnalyzer, chipFor, nearestBeat } from './seam';
+import { findNearbyLoop } from './nearby';
 import { smoothSeam } from './smooth';
 import { findSections } from './sections';
 import { selfSimilarity } from './ssm';
 import type { SelfSimilarity } from './ssm';
 import { estimateTempo } from './tempo';
 import type { TempoResult } from './tempo';
-import type { Analysis, AnalysisStage, AnalysisUpdate, LoopCandidate, Section, SeamReport, SeamRequest } from './types';
+import type { Analysis, AnalysisStage, AnalysisUpdate, LoopCandidate, NearbyLoop, Section, SeamReport, SeamRequest } from './types';
 
 export type ProgressFn = (stage: AnalysisStage, pct: number) => void;
 
@@ -49,6 +50,8 @@ export class AnalysisSession {
   private sections: Section[] = [];
   private candidates: LoopCandidate[] = [];
   private seamAnalyzer: SeamAnalyzer | null = null;
+  /** Beat indices that start a section (empty when there are no sections). */
+  private sectionBoundaries: number[] = [];
 
   constructor(
     private samples: Float32Array,
@@ -210,6 +213,25 @@ export class AnalysisSession {
         const b = nearestBeat(this.beatTimes, plan ? plan.loopEnd : req.end);
         if (b > a) context = contextMatch(ssm, a, b);
       }
+      let nearby: NearbyLoop | null = null;
+      const model = tool.inputs.harmony;
+      if (tool.hasGrid && model && ssm && this.features && scores.harmony !== null) {
+        const a = nearestBeat(this.beatTimes, req.start);
+        const b = nearestBeat(this.beatTimes, req.end);
+        if (b > a) {
+          nearby = findNearbyLoop({
+            harmony: model,
+            score: { ssm, features: this.features, boundaries: new Set(this.sectionBoundaries), harmony: model },
+            beats: this.beatTimes,
+            beatsPerBar: this.beatsPerBar,
+            a,
+            b,
+            currentHarmony: scores.harmony,
+            minStart: req.minStart ?? 0,
+            maxEnd: req.maxEnd ?? this.duration,
+          });
+        }
+      }
       return {
         id: req.id,
         start: req.start,
@@ -221,6 +243,7 @@ export class AnalysisSession {
         before,
         chip: chipFor(scores.quality),
         plan,
+        nearby,
       };
     });
   }
@@ -251,6 +274,7 @@ export class AnalysisSession {
   private computeStructure(progress: ProgressFn): void {
     this.sections = [];
     this.candidates = [];
+    this.sectionBoundaries = [];
     if (!this.features || !this.ssm) return;
     progress('candidates', 0);
     const barBeats = this.barBeats();
@@ -266,6 +290,7 @@ export class AnalysisSession {
       delay: ANALYSIS_CONFIG.ssm.delay,
     });
     this.sections = sections;
+    this.sectionBoundaries = boundaries;
     progress('candidates', 0.5);
     this.candidates = findCandidates({
       ssm: this.ssm,

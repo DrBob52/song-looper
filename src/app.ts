@@ -156,6 +156,8 @@ export class App {
   /** What each loop's seam report was last requested for (by region id), see requestKey. */
   private seamKeys = new Map<string, string>();
   private seamInFlight: Promise<void> | null = null;
+  /** True while seam plans from the worker are being attached to the loops. */
+  private applyingSeams = false;
 
   constructor(private root: HTMLElement) {
     this.dropzone = new Dropzone((f) => void this.loadFile(f));
@@ -182,6 +184,8 @@ export class App {
       onAuditionOriginal: (id) => void this.auditionSeam(id, true),
       onSmoothToggle: (id, on) => this.setSmooth(id, on),
       onUndoSeam: (id) => this.undoSeam(id),
+      onNearbyAudition: (id) => void this.auditionNearby(id),
+      onNearbyUse: (id) => this.useNearby(id),
       onRemove: (id) => this.removeRegion(id),
       onHover: (id) => {
         const r = id ? this.store.get().regions.find((x) => x.id === id) : undefined;
@@ -297,6 +301,10 @@ export class App {
           const report = s.seams[r.id];
           return report && seamKey(report) === seamKey(r) ? report : null;
         },
+        nearbyOf: (r) => {
+          const report = s.seams[r.id];
+          return report && seamKey(report) === seamKey(r) ? report.nearby : null;
+        },
       });
     }
     if (regionsChanged || s.analysis !== prev.analysis || s.analysisState !== prev.analysisState) this.scheduleSeamReports();
@@ -387,7 +395,8 @@ export class App {
   private onPlanChanged(contentChanged: boolean): void {
     if (!contentChanged) return;
     this.extendedKey = null;
-    if (this.player.isAuxPlaying()) this.stopAux();
+    // A seam plan arriving from the worker only refines how a loop plays: it must not cut off a preview that is running.
+    if (this.player.isAuxPlaying() && !this.applyingSeams) this.stopAux();
     if (this.store.get().playMode === 'extended') this.scheduleRender();
   }
 
@@ -666,7 +675,14 @@ export class App {
       return next;
     });
     this.store.set({ seams });
-    if (regionsChanged) this.commitRegions(regions);
+    if (regionsChanged) {
+      this.applyingSeams = true;
+      try {
+        this.commitRegions(regions);
+      } finally {
+        this.applyingSeams = false;
+      }
+    }
   }
 
   /** Resolves once every loop's seam plan is in (so that previews and the export use what the user sees). */
@@ -823,6 +839,30 @@ export class App {
   /** The Smooth seam checkbox of a loop. Turning it off is the same as Undo. */
   setSmooth(id: string, on: boolean): void {
     this.updateRegion(id, { smooth: on });
+  }
+
+  /** The nearby loop with a cleaner chord change that the seam report found for a loop, if it still applies. */
+  private nearbyOf(id: string): { start: number; end: number } | null {
+    const { regions, seams } = this.store.get();
+    const region = regions.find((r) => r.id === id);
+    const report = seams[id];
+    return region && report && seamKey(report) === seamKey(region) ? report.nearby : null;
+  }
+
+  /** Hear the (smoothed) seam of the nearby loop: it is only a suggestion until the user clicks Use. */
+  async auditionNearby(id: string): Promise<void> {
+    const nearby = this.nearbyOf(id);
+    if (!nearby) return;
+    const key = `nearby-${id}`;
+    const seam = await this.planFor(key, nearby);
+    await this.auditionSpan(key, { start: nearby.start, end: nearby.end, ...(seam ? { seam } : {}) });
+  }
+
+  /** Move the loop to the nearby loop (bigger than a beat, so it only happens when the user clicks). */
+  useNearby(id: string): void {
+    const nearby = this.nearbyOf(id);
+    if (!nearby) return;
+    this.updateRegion(id, { start: nearby.start, end: nearby.end });
   }
 
   /** Undo (SPEC-seams.md 3.5): the loop plays exactly as its points say, and smoothing stays off for it. */

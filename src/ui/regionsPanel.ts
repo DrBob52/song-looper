@@ -1,4 +1,4 @@
-import type { SeamReport } from '../analysis/types';
+import type { NearbyLoop, SeamReport } from '../analysis/types';
 import type { LoopRegion } from '../model';
 import { MAX_REPEATS } from '../model';
 import { currentSeam } from '../audio/path';
@@ -19,6 +19,10 @@ export interface RegionsPanelCallbacks {
   onSmoothToggle(id: string, on: boolean): void;
   /** Restore the original seam and turn smoothing off for the loop. */
   onUndoSeam(id: string): void;
+  /** Hear the seam of the nearby loop with a cleaner chord change. */
+  onNearbyAudition(id: string): void;
+  /** Replace the loop's points with the nearby loop's. */
+  onNearbyUse(id: string): void;
   onRemove(id: string): void;
   onHover(id: string | null): void;
 }
@@ -33,6 +37,8 @@ export interface RegionsPanelInfo {
   repeatsLocked: boolean;
   /** The seam report of a region, once the analysis worker has delivered it. */
   seamOf(region: LoopRegion): SeamReport | null;
+  /** A loop nearby with a cleaner chord change, if the seam report found one. */
+  nearbyOf(region: LoopRegion): NearbyLoop | null;
 }
 
 interface Row {
@@ -52,6 +58,8 @@ interface Row {
   summary: HTMLElement;
   summaryText: HTMLElement;
   undo: HTMLButtonElement;
+  nearby: HTMLElement;
+  nearbyText: HTMLElement;
 }
 
 /** The user's loop regions, each with its own repeat count. Rows are updated in place (keyed by id). */
@@ -134,6 +142,11 @@ export class RegionsPanel {
       const plan = currentSeam(region);
       row.summary.hidden = !(smooth && plan);
       if (smooth && plan) row.summaryText.textContent = seamSummary(plan);
+      const nearby = info.nearbyOf(region);
+      row.nearby.hidden = !nearby;
+      if (nearby) {
+        row.nearbyText.textContent = `Cleaner chord change nearby: ${formatTime(nearby.start, 1)}\u2013${formatTime(nearby.end, 1)} (${formatBars(nearby.bars)})`;
+      }
       const previewing = info.previewingId === region.id;
       row.loopBtn.textContent = previewing ? 'Stop' : 'Loop';
       row.loopBtn.classList.toggle('active', previewing);
@@ -205,6 +218,22 @@ export class RegionsPanel {
       on: { click: () => this.cb.onUndoSeam(id) },
     });
     const summary = h('div', { class: 'seam-summary small', attrs: { hidden: true } }, [summaryText, undo]);
+    const nearbyText = h('span', { attrs: { 'data-testid': 'nearby-text' } });
+    const nearby = h('div', { class: 'nearby small', attrs: { hidden: true, 'data-testid': 'nearby' } }, [
+      nearbyText,
+      h('button', {
+        class: 'btn sm',
+        text: 'Audition',
+        attrs: { type: 'button', 'data-testid': 'nearby-audition', title: 'Hear the seam of that loop' },
+        on: { click: () => this.cb.onNearbyAudition(id) },
+      }),
+      h('button', {
+        class: 'btn sm primary',
+        text: 'Use',
+        attrs: { type: 'button', 'data-testid': 'nearby-use', title: 'Use that loop instead of this one' },
+        on: { click: () => this.cb.onNearbyUse(id) },
+      }),
+    ]);
     const originalBtn = h('button', {
       class: 'btn sm',
       text: 'Hear original',
@@ -255,10 +284,11 @@ export class RegionsPanel {
             removeBtn,
           ]),
           summary,
+          nearby,
         ]),
       ],
     );
-    return { el, swatch, title, times, meta, repeats, dec, inc, snap, loopBtn, seam, chip, smooth, summary, summaryText, undo };
+    return { el, swatch, title, times, meta, repeats, dec, inc, snap, loopBtn, seam, chip, smooth, summary, summaryText, undo, nearby, nearbyText };
   }
 }
 

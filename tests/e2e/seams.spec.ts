@@ -121,3 +121,41 @@ test('smooth seam: on by default, shows what moved, Undo restores the loop, Hear
   expect((await region()).seam).toBeTruthy();
   expect(errors).toEqual([]);
 });
+
+test('a loop with a poor chord change is offered a cleaner one nearby: Audition plays it, Use switches to it', async ({ page }) => {
+  const errors: string[] = [];
+  page.on('pageerror', (e) => errors.push(e.message));
+  const fixture = await makeChordFixture(SONG1, 'song1.wav');
+  await loadFixture(page, fixture);
+  await waitForAnalysis(page);
+  const bar = 2;
+
+  // bars 1-7 of C G Am F Dm Em F G end on F and return to C: not a change the song makes
+  await addLoop(page, 0, 7 * bar);
+  const nearby = page.getByTestId('nearby').first();
+  await expect(nearby).toBeVisible();
+  await expect(page.getByTestId('nearby-text').first()).toHaveText(/Cleaner chord change nearby: 0:00\.\d.0:1[56]\.\d \(8 bars\)/);
+  await expect(page.getByTestId('seam-chip').first()).toHaveText('Rough');
+
+  // it is only a suggestion: nothing moves until the user clicks
+  let [region] = await appState<{ start: number; end: number }[]>(page, 's.regions');
+  expect(region!.start).toBe(0);
+  expect(region!.end).toBe(7 * bar);
+
+  await page.getByTestId('nearby-audition').first().click();
+  await expect(page.getByTestId('play')).toHaveText('Pause');
+  await page.getByTestId('play').click();
+  await expect(page.getByTestId('play')).toHaveText('Play');
+  [region] = await appState<{ start: number; end: number }[]>(page, 's.regions');
+  expect(region!.end).toBe(7 * bar);
+
+  await page.getByTestId('nearby-use').first().click();
+  await expect.poll(async () => (await appState<{ end: number }[]>(page, 's.regions'))[0]!.end).toBeGreaterThan(15.9);
+  [region] = await appState<{ start: number; end: number }[]>(page, 's.regions');
+  expect(region!.start).toBeLessThan(0.1);
+  expect(region!.end).toBeLessThan(16.1);
+  // the new loop's chord change (G back to C) is in the song: no more suggestion, and the chip agrees
+  await expect(page.getByTestId('seam-chip').first()).not.toHaveText('Rough');
+  await expect(page.getByTestId('nearby').first()).toBeHidden();
+  expect(errors).toEqual([]);
+});
