@@ -1,5 +1,7 @@
 import './style.css';
 import './skins/pro.css';
+import './skins/studio.css';
+import './skins/club.css';
 import { App } from './app';
 
 const root = document.querySelector<HTMLDivElement>('#app');

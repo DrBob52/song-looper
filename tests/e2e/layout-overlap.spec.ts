@@ -12,8 +12,11 @@ interface Look {
   modes: readonly ('light' | 'dark')[];
 }
 // the skins arrive with SPEC-v1.3.md section 5; each one is added here as it lands
+// (Studio and Club are dark whatever the host says: they are checked on a light host and on a dark one)
 const LOOKS: Look[] = [
   { skin: 'vinyl', modes: ['light', 'dark'] },
+  { skin: 'studio', modes: ['light', 'dark'] },
+  { skin: 'club', modes: ['light', 'dark'] },
   { skin: 'pro', modes: ['light', 'dark'] },
 ];
 

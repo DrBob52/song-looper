@@ -212,6 +212,11 @@ export class Transport {
     this.spin.setPlaying(playing);
   }
 
+  /** A beat is sounding (the Night club skin pulses the play ring on it); a class only, drawn by the skin. */
+  setBeat(on: boolean): void {
+    this.playBtn.classList.toggle('beat', on);
+  }
+
   setTime(t: number, duration: number): void {
     this.timeEl.textContent = `${formatTime(t, 1)} / ${formatTime(duration, 1)}`;
   }

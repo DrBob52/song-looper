@@ -1,0 +1,604 @@
+/*
+ * Skin: Night club (SPEC-v1.3.md 5.2). Dark glass with glowing 1 px borders, neon magenta and cyan on near-black,
+ * Unbounded for display, Manrope for text, JetBrains Mono for numbers. Dark only: every colour is set here and the colour
+ * scheme is dark, so it looks the same on a light or a dark host. No purple-to-blue page background: the glow belongs to
+ * the controls and the waveform only.
+ *
+ * Signature motion (script, not CSS): while a song with a steady beat plays, the play ring and the played part of the
+ * waveform pulse briefly on each beat (the classes `beat` on .play and .wave-host, switched in step with the playhead and
+ * the analysed beat grid). Without a steady beat, or with reduced motion, nothing moves.
+ */
+
+:root[data-skin='club'] {
+  color-scheme: dark;
+  --bg: #07060b;
+  --panel: #110f19;
+  --panel-2: #191526;
+  --ink: #f4f1ff;
+  --ink-soft: #a49fbd;
+  --rule: rgba(255, 47, 185, 0.18);
+  --magenta: #ff2fb9;
+  --cyan: #19e3ff;
+  --on-accent: #07060b;
+  --paper: var(--bg);
+  --sleeve: var(--panel);
+  --label-red: var(--magenta);
+  --on-red: var(--on-accent);
+  --mustard: var(--cyan); /* selection, section stickers, focus: the second neon */
+  --sticker-ink: #07060b;
+  --vinyl: #0a0812;
+  --ok: #7cff6b;
+  --warn: #ffd23f;
+  --bad: #ff5c8a;
+  --ok-text: #7cff6b;
+  --warn-text: #ffd23f;
+  --bad-text: #ff7da1;
+  --loop-1: #ff2fb9;
+  --loop-2: #19e3ff;
+  --loop-3: #ffd23f;
+  --loop-4: #7cff6b;
+  --loop-5: #b388ff;
+  --loop-1-ink: #07060b;
+  --loop-2-ink: #07060b;
+  --loop-3-ink: #07060b;
+  --loop-4-ink: #07060b;
+  --loop-5-ink: #07060b;
+  --grid: rgba(244, 241, 255, 0.1);
+  --grid-bar: rgba(244, 241, 255, 0.34);
+  --wash: rgba(244, 241, 255, 0.07);
+  --shadow: 0 0 0 1px rgba(255, 47, 185, 0.06), 0 0 18px -8px rgba(255, 47, 185, 0.5);
+  --shadow-lift: 0 0 22px -6px rgba(255, 47, 185, 0.6);
+  --shadow-bar: 0 -10px 34px -10px rgba(255, 47, 185, 0.35);
+  --scrim: rgba(3, 2, 8, 0.78);
+  --region-alpha: 0.3;
+  --region-alpha-on: 0.46;
+  --cut-fill: rgba(0, 0, 0, 0.7);
+  --cut-line: rgba(244, 241, 255, 0.55);
+  --cut-ink: #f4f1ff;
+  --cut-label-bg: rgba(0, 0, 0, 0.78);
+  --grain: none;
+  --wave: #ff2fb9;
+  --wave-2: #19e3ff;
+  --wave-progress: #ffffff;
+  --wave-progress-2: #19e3ff;
+  --cursor: #ffffff;
+  --font-display: 'Unbounded', 'Arial Black', 'Helvetica Neue', Arial, sans-serif;
+  --font-body: 'Manrope', ui-sans-serif, system-ui, -apple-system, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif;
+  --font-mono: 'JetBrains Mono', ui-monospace, 'SF Mono', Menlo, Consolas, 'Liberation Mono', monospace;
+}
+
+/* ---- type and page ---- */
+
+:root[data-skin='club'] header.top h1 {
+  font-weight: 800;
+  font-stretch: 100%;
+  letter-spacing: -0.02em;
+  font-size: clamp(1.35rem, 5vw, 2rem);
+  background: linear-gradient(90deg, var(--magenta), var(--cyan));
+  -webkit-background-clip: text;
+  background-clip: text;
+  color: transparent;
+  text-shadow: none;
+  filter: drop-shadow(0 0 10px rgba(255, 47, 185, 0.45));
+  width: fit-content;
+}
+
+:root[data-skin='club'] header.top p {
+  font-variant-caps: normal;
+  letter-spacing: 0.04em;
+  font-size: 0.92rem;
+}
+
+:root[data-skin='club'] .looks-label {
+  font-variant-caps: normal;
+  letter-spacing: 0.04em;
+  font-size: 0.82rem;
+}
+
+:root[data-skin='club'] .look {
+  background: var(--panel);
+  border-color: rgba(255, 47, 185, 0.35);
+  font-family: var(--font-body);
+}
+
+:root[data-skin='club'] .look:has(input:checked) {
+  border-color: var(--cyan);
+  box-shadow:
+    0 0 0 1px var(--cyan),
+    0 0 14px -2px var(--cyan);
+}
+
+/* ---- cards: dark glass, a glowing 1 px border ---- */
+
+:root[data-skin='club'] .card {
+  border-radius: 14px;
+  border: 1px solid rgba(255, 47, 185, 0.4);
+  background: linear-gradient(180deg, rgba(255, 255, 255, 0.045), rgba(255, 255, 255, 0.01)), var(--panel);
+  box-shadow:
+    0 0 0 1px rgba(255, 47, 185, 0.06),
+    0 0 20px -8px rgba(255, 47, 185, 0.55),
+    inset 0 0 26px -18px rgba(25, 227, 255, 0.5);
+  padding: 18px 20px;
+}
+
+:root[data-skin='club'] .card > h2,
+:root[data-skin='club'] .card-head h2 {
+  font-weight: 700;
+  font-stretch: 100%;
+  font-size: 0.74rem;
+  letter-spacing: 0.1em;
+  color: var(--cyan);
+  text-shadow: 0 0 10px rgba(25, 227, 255, 0.45);
+}
+
+:root[data-skin='club'] .side-tag {
+  color: var(--magenta);
+}
+
+/* ---- buttons and fields ---- */
+
+:root[data-skin='club'] .btn {
+  border: 1px solid rgba(25, 227, 255, 0.7);
+  background: rgba(25, 227, 255, 0.05);
+  border-radius: 999px;
+  font-weight: 700;
+}
+
+:root[data-skin='club'] .btn:hover:not(:disabled) {
+  background: rgba(25, 227, 255, 0.16);
+  box-shadow: 0 0 14px -3px var(--cyan);
+}
+
+:root[data-skin='club'] .btn:active:not(:disabled) {
+  background: var(--cyan);
+  color: var(--on-accent);
+}
+
+:root[data-skin='club'] .btn.primary,
+:root[data-skin='club'] .btn.export {
+  background: linear-gradient(90deg, var(--magenta), #ff63cf);
+  border-color: var(--magenta);
+  color: var(--on-accent);
+  box-shadow: 0 0 18px -4px var(--magenta);
+}
+
+:root[data-skin='club'] .btn.primary:hover:not(:disabled),
+:root[data-skin='club'] .btn.export:hover:not(:disabled) {
+  background: linear-gradient(90deg, #ff4dc4, #ff7bd8);
+  filter: none;
+  box-shadow: 0 0 24px -2px var(--magenta);
+}
+
+:root[data-skin='club'] .btn.primary:active:not(:disabled),
+:root[data-skin='club'] .btn.export:active:not(:disabled) {
+  background: var(--magenta);
+  color: var(--on-accent);
+  filter: none;
+}
+
+:root[data-skin='club'] .btn.quiet {
+  background: none;
+  border-color: transparent;
+  text-decoration: none;
+  box-shadow: none;
+  color: var(--ink);
+}
+
+:root[data-skin='club'] .btn.quiet:hover:not(:disabled) {
+  background: var(--wash);
+  box-shadow: none;
+}
+
+:root[data-skin='club'] .btn.active {
+  background: var(--cyan);
+  color: var(--on-accent);
+  border-color: var(--cyan);
+  box-shadow: 0 0 14px -3px var(--cyan);
+}
+
+:root[data-skin='club'] .segmented {
+  border: 1px solid rgba(25, 227, 255, 0.7);
+}
+
+:root[data-skin='club'] .segmented .btn {
+  border: 0;
+  background: none;
+  box-shadow: none;
+}
+
+:root[data-skin='club'] .segmented .btn + .btn {
+  border-left: 1px solid rgba(25, 227, 255, 0.5);
+}
+
+:root[data-skin='club'] .segmented .btn.active {
+  background: var(--cyan);
+}
+
+:root[data-skin='club'] .segmented .btn.active:active:not(:disabled) {
+  background: var(--cyan);
+  color: var(--on-accent);
+}
+
+:root[data-skin='club'] input.nf-input {
+  background: #0b0914;
+  border: 1px solid rgba(164, 159, 189, 0.7);
+  border-radius: 8px;
+}
+
+:root[data-skin='club'] input.nf-input:focus {
+  border-color: var(--cyan);
+  box-shadow: 0 0 12px -3px var(--cyan);
+}
+
+:root[data-skin='club'] input.nf-input[aria-invalid='true'] {
+  border-color: var(--bad);
+}
+
+:root[data-skin='club'] input[type='text'],
+:root[data-skin='club'] select {
+  border-bottom-color: var(--cyan);
+}
+
+:root[data-skin='club'] select {
+  color: var(--ink);
+}
+
+:root[data-skin='club'] input[type='range'],
+:root[data-skin='club'] input[type='checkbox'],
+:root[data-skin='club'] input[type='radio'] {
+  accent-color: var(--magenta);
+}
+
+:root[data-skin='club'] :focus-visible {
+  outline: 2px solid var(--cyan);
+  outline-offset: 2px;
+  box-shadow: 0 0 14px -2px var(--cyan);
+}
+
+:root[data-skin='club'] .look:has(input:focus-visible) {
+  outline-color: var(--cyan);
+}
+
+:root[data-skin='club'] kbd {
+  background: var(--panel-2);
+  border-color: var(--ink-soft);
+  border-radius: 6px;
+}
+
+/* ---- the transport: a glass bar and a big round play button with a conic neon ring ---- */
+
+:root[data-skin='club'] .transport {
+  border: 1px solid rgba(255, 47, 185, 0.5);
+  border-radius: 22px;
+  background: linear-gradient(180deg, rgba(255, 255, 255, 0.05), rgba(255, 255, 255, 0.01)), var(--panel);
+}
+
+:root[data-skin='club'] .play {
+  gap: 20px;
+  padding-right: 6px;
+}
+
+:root[data-skin='club'] .record {
+  width: 76px;
+  height: 76px;
+  margin: 8px;
+  border-radius: 50%;
+  background: radial-gradient(circle at 50% 35%, #2a2140, #0d0a16 70%);
+  box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.08);
+  transition: transform 90ms ease-out;
+}
+
+/* the ring: magenta to cyan and back, with a glow (a pseudo-element, so that it does not turn with the disc) */
+:root[data-skin='club'] .record::before {
+  content: '';
+  position: absolute;
+  inset: -7px;
+  border-radius: 50%;
+  background: conic-gradient(from 20deg, var(--magenta), var(--cyan), var(--magenta));
+  -webkit-mask-image: radial-gradient(farthest-side, transparent calc(100% - 5px), #000 calc(100% - 4px));
+  mask-image: radial-gradient(farthest-side, transparent calc(100% - 5px), #000 calc(100% - 4px));
+  filter: drop-shadow(0 0 7px rgba(255, 47, 185, 0.7));
+  transition: filter 90ms ease-out;
+}
+
+:root[data-skin='club'] .record-disc,
+:root[data-skin='club'] .record-label,
+:root[data-skin='club'] .record-sheen {
+  display: none;
+}
+
+:root[data-skin='club'] .record-glyph {
+  border-color: transparent transparent transparent var(--ink);
+}
+
+:root[data-skin='club'] .play[aria-pressed='true'] .record-glyph {
+  background: linear-gradient(90deg, var(--ink) 0 36%, transparent 36% 64%, var(--ink) 64%);
+}
+
+:root[data-skin='club'] .play:hover:not(:disabled) .record {
+  filter: none;
+}
+
+:root[data-skin='club'] .play:hover:not(:disabled) .record::before {
+  filter: drop-shadow(0 0 11px rgba(255, 47, 185, 0.95));
+}
+
+/* on each beat: a brief pulse of the ring and of the played part of the waveform */
+:root[data-skin='club'] .play.beat .record {
+  transform: scale(1.06);
+}
+
+:root[data-skin='club'] .play.beat .record::before {
+  filter: drop-shadow(0 0 15px rgba(255, 47, 185, 1)) drop-shadow(0 0 8px rgba(25, 227, 255, 0.9)) brightness(1.35);
+}
+
+:root[data-skin='club'] .wave-host ::part(progress) {
+  transition: filter 110ms ease-out;
+}
+
+:root[data-skin='club'] .wave-host.beat ::part(progress) {
+  filter: brightness(1.7) drop-shadow(0 0 7px rgba(255, 47, 185, 0.9));
+}
+
+:root[data-skin='club'] .play-word {
+  font-weight: 800;
+  font-stretch: 100%;
+  font-size: 0.95rem;
+  letter-spacing: 0.04em;
+}
+
+:root[data-skin='club'] .transport .time {
+  font-weight: 600;
+  color: var(--ink);
+}
+
+/* ---- loops are neon pills; stamps glow ---- */
+
+:root[data-skin='club'] .region {
+  border: 1.5px solid var(--loop-color, var(--rule));
+  border-radius: 24px;
+  padding: 16px 18px;
+  background: color-mix(in srgb, var(--loop-color, transparent) 5%, var(--panel-2));
+  box-shadow:
+    0 0 14px -5px var(--loop-color, transparent),
+    inset 0 0 16px -12px var(--loop-color, transparent);
+}
+
+:root[data-skin='club'] .region:hover {
+  transform: none;
+  box-shadow:
+    0 0 20px -4px var(--loop-color, transparent),
+    inset 0 0 16px -10px var(--loop-color, transparent);
+}
+
+:root[data-skin='club'] .region.selected {
+  border-color: var(--loop-color, var(--cyan));
+  box-shadow:
+    0 0 0 2px var(--loop-color, var(--cyan)),
+    0 0 24px -4px var(--loop-color, var(--cyan));
+}
+
+:root[data-skin='club'] .loop-label {
+  border: 0;
+  box-shadow: 0 0 14px -2px var(--loop-color, transparent);
+}
+
+:root[data-skin='club'] .loop-label::after {
+  display: none;
+}
+
+:root[data-skin='club'] .loop-play {
+  border-color: var(--cyan);
+}
+
+:root[data-skin='club'] .region-title strong,
+:root[data-skin='club'] .cut-head strong {
+  font-stretch: 100%;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  font-size: 0.85rem;
+}
+
+:root[data-skin='club'] .cut {
+  border: 1.5px dashed var(--ink-soft);
+  border-radius: 20px;
+  background: var(--panel-2);
+}
+
+:root[data-skin='club'] .cut:hover {
+  transform: none;
+  box-shadow: none;
+}
+
+:root[data-skin='club'] .cut.selected {
+  border-style: solid;
+  border-color: var(--cyan);
+  box-shadow: 0 0 0 1px var(--cyan);
+}
+
+:root[data-skin='club'] .cut-glyph {
+  border-radius: 50%;
+}
+
+:root[data-skin='club'] .chip {
+  transform: none;
+  -webkit-mask-image: none;
+  mask-image: none;
+  border-width: 1.5px;
+  border-radius: 999px;
+  padding: 1px 12px;
+  font-family: var(--font-body);
+  font-weight: 800;
+  font-size: 0.74rem;
+  letter-spacing: 0.1em;
+  background: color-mix(in srgb, currentColor 10%, transparent);
+  box-shadow:
+    0 0 10px -3px currentColor,
+    inset 0 0 8px -5px currentColor;
+}
+
+:root[data-skin='club'] .suggestion {
+  border-radius: 12px;
+  border-bottom-color: rgba(255, 47, 185, 0.22);
+}
+
+:root[data-skin='club'] .suggestion:hover {
+  transform: none;
+  box-shadow: 0 0 16px -8px var(--magenta);
+  background: var(--panel-2);
+}
+
+:root[data-skin='club'] .suggestion-rank {
+  font-stretch: 100%;
+  font-weight: 800;
+  font-size: 0.9rem;
+  color: var(--magenta);
+  text-shadow: 0 0 8px rgba(255, 47, 185, 0.55);
+}
+
+:root[data-skin='club'] .stars {
+  color: var(--warn);
+}
+
+:root[data-skin='club'] .big {
+  font-weight: 600;
+  letter-spacing: -0.04em;
+}
+
+:root[data-skin='club'] .length-arrow {
+  color: var(--cyan);
+  text-shadow: 0 0 8px rgba(25, 227, 255, 0.6);
+}
+
+:root[data-skin='club'] .length-caption {
+  font-variant-caps: normal;
+  letter-spacing: 0.04em;
+  font-size: 0.85rem;
+}
+
+/* ---- waveform and strip: the wave is a magenta to cyan gradient with a soft glow around it ---- */
+
+:root[data-skin='club'] .wave-host {
+  border-radius: 12px;
+  background: #0a0812;
+  border: 1px solid rgba(255, 47, 185, 0.4);
+  filter: drop-shadow(0 0 12px rgba(255, 47, 185, 0.4));
+}
+
+:root[data-skin='club'] .tl-bar {
+  height: 28px;
+  border: 1px solid rgba(25, 227, 255, 0.6);
+  border-radius: 14px;
+  background: #0a0812;
+}
+
+:root[data-skin='club'] .tl-bar::after {
+  display: none;
+}
+
+:root[data-skin='club'] .tl-ending {
+  border-radius: 14px;
+}
+
+:root[data-skin='club'] .tl-block {
+  line-height: 28px;
+  box-shadow: inset 1px 0 0 #0a0812;
+}
+
+:root[data-skin='club'] .progress .track {
+  height: 8px;
+  border: 1px solid rgba(25, 227, 255, 0.6);
+  background: #0a0812;
+  box-shadow: none;
+}
+
+:root[data-skin='club'] .progress .fill {
+  background: linear-gradient(90deg, var(--magenta), var(--cyan));
+  box-shadow: 0 0 10px var(--magenta);
+}
+
+/* ---- drop zone ---- */
+
+:root[data-skin='club'] .dropzone {
+  width: min(100%, 560px);
+  margin: 16px auto 0;
+}
+
+:root[data-skin='club'] .dropzone .sleeve-record,
+:root[data-skin='club'] .dropzone .sleeve-ring,
+:root[data-skin='club'] .dropzone .sleeve-side {
+  display: none;
+}
+
+:root[data-skin='club'] .dropzone .sleeve-face {
+  aspect-ratio: auto;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  padding: 40px 24px;
+  border: 1.5px dashed var(--magenta);
+  border-radius: 20px;
+  background: linear-gradient(180deg, rgba(255, 255, 255, 0.045), rgba(255, 255, 255, 0.01)), var(--panel);
+  box-shadow: 0 0 22px -8px var(--magenta);
+}
+
+:root[data-skin='club'] .dropzone:hover .sleeve-face,
+:root[data-skin='club'] .dropzone.drag .sleeve-face {
+  transform: none;
+  border-color: var(--cyan);
+  box-shadow: 0 0 26px -4px var(--cyan);
+}
+
+:root[data-skin='club'] .dropzone .dz-title {
+  font-weight: 800;
+  font-stretch: 100%;
+  letter-spacing: -0.01em;
+  font-size: 1rem;
+}
+
+:root[data-skin='club'] .dropzone.compact {
+  width: 100%;
+  margin: 0;
+}
+
+:root[data-skin='club'] .dropzone.compact .sleeve-face {
+  flex-direction: row;
+  justify-content: flex-start;
+  align-items: center;
+  padding: 10px 18px;
+  border-style: solid;
+  border-width: 1px;
+  border-color: rgba(255, 47, 185, 0.4);
+  border-radius: 14px;
+}
+
+:root[data-skin='club'] .dropzone.compact .sleeve-record {
+  display: none;
+}
+
+:root[data-skin='club'] .dropzone.compact .dz-title {
+  font-size: 0.9rem;
+}
+
+/* ---- dialog ---- */
+
+:root[data-skin='club'] dialog.export-dialog {
+  border: 1px solid rgba(255, 47, 185, 0.55);
+  border-radius: 20px;
+  box-shadow:
+    0 0 40px -10px var(--magenta),
+    0 24px 60px rgba(0, 0, 0, 0.7);
+}
+
+:root[data-skin='club'] .export-form h2 {
+  font-stretch: 100%;
+  font-weight: 800;
+  letter-spacing: -0.01em;
+  font-size: 1rem;
+}
+
+:root[data-skin='club'] .export-form fieldset {
+  border-radius: 12px;
+  border-color: rgba(255, 47, 185, 0.35);
+}

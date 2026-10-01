@@ -78,6 +78,9 @@ import { formatChannels, formatRate } from './util/format';
 import { formatClockFloor, formatTime, roundMs } from './util/time';
 import { createStore } from './util/store';
 
+/** How long the beat pulse of the Night club skin lasts after each beat, in seconds. */
+const BEAT_PULSE_SECONDS = 0.11;
+
 /** The waveform zoom range in pixels per second (0 fits the whole song). */
 const ZOOM_MIN_PX = 10;
 const ZOOM_MAX_PX = 400;
@@ -421,6 +424,7 @@ export class App {
     applySkin(id);
     saveSkinChoice(id);
     this.skinPicker.setCurrent(id);
+    this.pulseOnBeat(0); // a pulse of the club look must not stay on in another one
     // the waveform re-reads its colours (it also watches data-skin, so this is only to be sure it has done so now)
     this.waveform?.refreshTheme();
   }
@@ -1856,11 +1860,47 @@ export class App {
     this.raf = requestAnimationFrame(tick);
   }
 
+  /** Seconds since the last analysed beat at or before original-song time `t`; Infinity without a steady beat. */
+  private beatPhase(t: number): number {
+    const { grid } = this.store.get();
+    const beats = grid.beats;
+    if (!grid.steady || beats.length < 2 || t < beats[0]!) return Infinity;
+    let lo = 0;
+    let hi = beats.length - 1;
+    while (lo < hi) {
+      const mid = (lo + hi + 1) >> 1;
+      if (beats[mid]! <= t) lo = mid;
+      else hi = mid - 1;
+    }
+    const phase = t - beats[lo]!;
+    // after the last beat there is nothing to pulse on
+    return lo === beats.length - 1 && phase > grid.beatSeconds ? Infinity : phase;
+  }
+
+  private beatOn = false;
+
+  /**
+   * The Night club skin's signature motion: the play ring and the played part of the waveform pulse briefly on each beat.
+   * It follows the playhead over the analysed beat grid (in original-song time, so it works for the extended song and the
+   * previews too) and only switches the class `beat`; there is nothing without a steady beat, and nothing with
+   * prefers-reduced-motion.
+   */
+  private pulseOnBeat(orig: number): void {
+    const club = document.documentElement.dataset.skin === 'club';
+    const playing = this.player.isPlaying() || this.player.isAuxPlaying();
+    const on = club && playing && !matchMedia('(prefers-reduced-motion: reduce)').matches && this.beatPhase(orig) < BEAT_PULSE_SECONDS;
+    if (on === this.beatOn) return;
+    this.beatOn = on;
+    this.transport.setBeat(on);
+    this.waveHost.classList.toggle('beat', on);
+  }
+
   private renderTime(): void {
     const { song, playMode } = this.store.get();
     if (!song) return;
     if (this.player.isAuxPlaying() && this.aux) {
       const orig = this.originalPlayhead();
+      this.pulseOnBeat(orig);
       this.transport.setTime(orig, song.duration);
       this.waveform?.setCursor(orig, true);
       this.timelineStrip.setPosition(originalToExtended(this.timeline, orig));
@@ -1869,6 +1909,7 @@ export class App {
     const t = this.player.getTime();
     this.transport.setTime(t, this.player.duration);
     const orig = playMode === 'extended' ? extendedToOriginal(this.timeline, t).time : t;
+    this.pulseOnBeat(orig);
     this.waveform?.setCursor(orig, this.player.isPlaying());
     this.timelineStrip.setPosition(playMode === 'extended' ? t : originalToExtended(this.timeline, t));
   }

@@ -1,0 +1,739 @@
+/*
+ * Skin: Studio hardware (SPEC-v1.3.md 5.2). A high-end sampler or drum machine: dark panels with a top bevel and corner
+ * screws, an amber LCD for the time and the number fields, LEDs, rubber keys. Dark only: every colour is set here and the
+ * colour scheme is dark, so it looks the same on a light or a dark host.
+ *
+ * The tokens use the spec's names (--bg, --panel, --accent, --lcd-bg, --led-*, ...); the component names (--paper, --sleeve,
+ * --label-red, ...) point at them.
+ */
+
+:root[data-skin='studio'] {
+  color-scheme: dark;
+  --bg: #141517;
+  --panel: #1e2023;
+  --panel-2: #262a2e;
+  --ink: #ece8df;
+  --ink-soft: #9b978e;
+  --rule: #33373c;
+  --accent: #ffb000;
+  --on-accent: #141517;
+  --lcd-bg: #231a00;
+  --lcd-ink: #ffb000;
+  --led-green: #3ddc6a;
+  --led-amber: #ffb000;
+  --led-red: #ff4a3d;
+  --led-off: #3a3d42;
+  --paper: var(--bg);
+  --sleeve: var(--panel);
+  --label-red: var(--accent);
+  --on-red: var(--on-accent);
+  --mustard: #ece8df; /* selection and section stickers: cream, as amber is loop 1 */
+  --sticker-ink: #141517;
+  --vinyl: #0b0b0c;
+  --ok: var(--led-green);
+  --warn: var(--led-amber);
+  --bad: var(--led-red);
+  --ok-text: #3ddc6a;
+  --warn-text: #ffb000;
+  --bad-text: #ff6a5e;
+  --loop-1: #ffb000;
+  --loop-2: #38c6d9;
+  --loop-3: #e2559c;
+  --loop-4: #3ddc6a;
+  --loop-5: #d9d4c7;
+  --loop-1-ink: #141517;
+  --loop-2-ink: #141517;
+  --loop-3-ink: #141517;
+  --loop-4-ink: #141517;
+  --loop-5-ink: #141517;
+  --grid: rgba(236, 232, 223, 0.12);
+  --grid-bar: rgba(236, 232, 223, 0.4);
+  --wash: rgba(236, 232, 223, 0.07);
+  --shadow: 0 1px 0 rgba(0, 0, 0, 0.7);
+  --shadow-lift: 0 2px 0 rgba(0, 0, 0, 0.7);
+  --shadow-bar: 0 -10px 30px -10px rgba(0, 0, 0, 0.85);
+  --scrim: rgba(0, 0, 0, 0.72);
+  --region-alpha: 0.26;
+  --region-alpha-on: 0.4;
+  --cut-fill: rgba(0, 0, 0, 0.66);
+  --cut-line: rgba(236, 232, 223, 0.5);
+  --cut-ink: #ece8df;
+  --cut-label-bg: rgba(0, 0, 0, 0.75);
+  --grain: none;
+  --wave: #ffb000;
+  --wave-progress: #ffd780;
+  --cursor: #ff4a3d;
+  --font-display: 'IBM Plex Sans Condensed', 'Arial Narrow', 'Roboto Condensed', 'Helvetica Neue', Arial, sans-serif;
+  --font-body: 'IBM Plex Sans Condensed', 'Arial Narrow', 'Roboto Condensed', 'Helvetica Neue', Arial, sans-serif;
+  --font-mono: 'IBM Plex Mono', ui-monospace, 'SF Mono', Menlo, Consolas, 'Liberation Mono', monospace;
+  --font-lcd: 'VT323', ui-monospace, 'SF Mono', Menlo, Consolas, 'Liberation Mono', monospace;
+}
+
+/* ---- type and page ---- */
+
+:root[data-skin='studio'] body {
+  font-weight: 500;
+}
+
+:root[data-skin='studio'] header.top h1 {
+  font-weight: 600;
+  font-stretch: 100%;
+  letter-spacing: 0.14em;
+  font-size: clamp(1.45rem, 5.4vw, 2.1rem);
+}
+
+:root[data-skin='studio'] header.top p {
+  font-variant-caps: normal;
+  text-transform: uppercase;
+  letter-spacing: 0.16em;
+  font-size: 0.78rem;
+}
+
+:root[data-skin='studio'] .looks-label {
+  font-variant-caps: normal;
+  text-transform: uppercase;
+  letter-spacing: 0.14em;
+  font-size: 0.72rem;
+}
+
+:root[data-skin='studio'] .look {
+  border-radius: 4px;
+  background: var(--panel-2);
+  border-color: #000;
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.08);
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  font-weight: 600;
+  font-size: 0.74rem;
+}
+
+:root[data-skin='studio'] .look:has(input:checked) {
+  border-color: var(--accent);
+  box-shadow: 0 0 0 1px var(--accent);
+}
+
+:root[data-skin='studio'] .look-swatch {
+  border-radius: 3px;
+}
+
+/* ---- panels: a top bevel, four corner screws, 6 px radii ---- */
+
+:root[data-skin='studio'] .card {
+  border-radius: 6px;
+  border-color: #0b0b0c;
+  padding: 18px 20px;
+  background-color: var(--panel);
+  background-image:
+    radial-gradient(circle at center, #6b6e73 0 1.2px, #2a2c30 1.8px 3.2px, transparent 3.6px),
+    radial-gradient(circle at center, #6b6e73 0 1.2px, #2a2c30 1.8px 3.2px, transparent 3.6px),
+    radial-gradient(circle at center, #6b6e73 0 1.2px, #2a2c30 1.8px 3.2px, transparent 3.6px),
+    radial-gradient(circle at center, #6b6e73 0 1.2px, #2a2c30 1.8px 3.2px, transparent 3.6px);
+  background-size: 8px 8px;
+  background-repeat: no-repeat;
+  background-position:
+    5px 5px,
+    calc(100% - 5px) 5px,
+    5px calc(100% - 5px),
+    calc(100% - 5px) calc(100% - 5px);
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.09),
+    0 1px 0 #000;
+}
+
+:root[data-skin='studio'] .card > h2,
+:root[data-skin='studio'] .card-head h2 {
+  font-weight: 600;
+  font-stretch: 100%;
+  font-size: 0.78rem;
+  letter-spacing: 0.18em;
+  color: var(--ink);
+}
+
+:root[data-skin='studio'] .side-tag {
+  font-family: var(--font-mono);
+  color: var(--accent);
+}
+
+:root[data-skin='studio'] .card-head {
+  border-bottom: 1px solid var(--rule);
+  padding-bottom: 8px;
+  margin-bottom: 12px;
+}
+
+/* ---- rubber keys, LCD fields ---- */
+
+:root[data-skin='studio'] .btn {
+  border: 1px solid #000;
+  border-radius: 4px;
+  background: linear-gradient(180deg, #30343a, #24272c);
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.12),
+    0 1px 0 rgba(0, 0, 0, 0.7);
+  text-transform: uppercase;
+  letter-spacing: 0.07em;
+  font-weight: 600;
+  font-size: 0.78rem;
+}
+
+:root[data-skin='studio'] .btn.sm {
+  font-size: 0.72rem;
+}
+
+:root[data-skin='studio'] .btn:hover:not(:disabled) {
+  background: linear-gradient(180deg, #3a3f46, #2b2f35);
+}
+
+:root[data-skin='studio'] .btn:active:not(:disabled) {
+  background: #1a1c1f;
+  color: var(--accent);
+  box-shadow: inset 0 2px 3px rgba(0, 0, 0, 0.7);
+}
+
+:root[data-skin='studio'] .btn.primary,
+:root[data-skin='studio'] .btn.export {
+  background: linear-gradient(180deg, #ffc23d, #e69d00);
+  border-color: #6a4800;
+  color: var(--on-accent);
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.45),
+    0 1px 0 rgba(0, 0, 0, 0.7);
+}
+
+:root[data-skin='studio'] .btn.primary:hover:not(:disabled),
+:root[data-skin='studio'] .btn.export:hover:not(:disabled) {
+  background: linear-gradient(180deg, #ffcb55, #f0a400);
+  filter: none;
+}
+
+:root[data-skin='studio'] .btn.primary:active:not(:disabled),
+:root[data-skin='studio'] .btn.export:active:not(:disabled) {
+  background: #d99400;
+  color: var(--on-accent);
+  filter: none;
+}
+
+:root[data-skin='studio'] .btn.quiet {
+  background: none;
+  border-color: transparent;
+  box-shadow: none;
+  text-decoration: none;
+  color: var(--ink);
+}
+
+:root[data-skin='studio'] .btn.quiet:hover:not(:disabled) {
+  background: var(--wash);
+}
+
+:root[data-skin='studio'] .btn.active {
+  background: linear-gradient(180deg, #ffc23d, #e69d00);
+  color: var(--on-accent);
+  border-color: #6a4800;
+}
+
+:root[data-skin='studio'] .segmented {
+  border: 1px solid #000;
+  border-radius: 4px;
+  background: #0b0b0c;
+}
+
+:root[data-skin='studio'] .segmented .btn {
+  border-radius: 0;
+  border: 0;
+  box-shadow: none;
+}
+
+:root[data-skin='studio'] .segmented .btn + .btn {
+  border-left: 1px solid #000;
+}
+
+:root[data-skin='studio'] .segmented .btn.active:active:not(:disabled) {
+  background: #d99400;
+  color: var(--on-accent);
+}
+
+:root[data-skin='studio'] input.nf-input {
+  background: var(--lcd-bg);
+  color: var(--lcd-ink);
+  border: 1px solid #000;
+  border-radius: 3px;
+  box-shadow: inset 0 2px 4px rgba(0, 0, 0, 0.8);
+  text-shadow: 0 0 5px rgba(255, 176, 0, 0.45);
+}
+
+:root[data-skin='studio'] input.nf-input::placeholder {
+  color: #a87500;
+}
+
+:root[data-skin='studio'] input.nf-input:focus {
+  border-color: var(--accent);
+}
+
+:root[data-skin='studio'] input.nf-input[aria-invalid='true'] {
+  border-color: var(--led-red);
+  outline-color: var(--led-red);
+}
+
+:root[data-skin='studio'] input[type='text'],
+:root[data-skin='studio'] select {
+  border-bottom-color: var(--accent);
+}
+
+:root[data-skin='studio'] select {
+  color: var(--ink);
+}
+
+:root[data-skin='studio'] input[type='range'],
+:root[data-skin='studio'] input[type='checkbox'],
+:root[data-skin='studio'] input[type='radio'] {
+  accent-color: var(--accent);
+}
+
+:root[data-skin='studio'] :focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+  box-shadow: none;
+}
+
+:root[data-skin='studio'] .look:has(input:focus-visible) {
+  outline-color: var(--accent);
+}
+
+:root[data-skin='studio'] kbd {
+  background: var(--panel-2);
+  border-color: #000;
+  color: var(--ink);
+}
+
+/* ---- the transport: a square rubber pad ringed with LEDs, and an LCD ---- */
+
+:root[data-skin='studio'] .transport {
+  border: 1px solid #000;
+  border-radius: 8px;
+  background: linear-gradient(180deg, #2a2d32, #1e2023);
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.1),
+    var(--shadow-bar);
+}
+
+:root[data-skin='studio'] .play {
+  gap: 22px;
+  padding-right: 6px;
+}
+
+/* the pad: 72 px, rubber, with the glyph in amber */
+:root[data-skin='studio'] .record {
+  width: 72px;
+  height: 72px;
+  margin: 10px;
+  border-radius: 10px;
+  background: linear-gradient(160deg, #3b3f46, #23262b);
+  border: 1px solid #000;
+  box-shadow:
+    inset 0 2px 0 rgba(255, 255, 255, 0.14),
+    inset 0 -3px 6px rgba(0, 0, 0, 0.5),
+    0 3px 0 #0b0b0c;
+}
+
+:root[data-skin='studio'] .play:hover:not(:disabled) .record {
+  filter: brightness(1.12);
+}
+
+:root[data-skin='studio'] .play:active:not(:disabled) .record {
+  transform: translateY(2px);
+  box-shadow:
+    inset 0 2px 6px rgba(0, 0, 0, 0.7),
+    0 1px 0 #0b0b0c;
+}
+
+:root[data-skin='studio'] .record-label,
+:root[data-skin='studio'] .record-sheen {
+  display: none;
+}
+
+:root[data-skin='studio'] .record-glyph {
+  border-color: transparent transparent transparent var(--accent);
+}
+
+:root[data-skin='studio'] .play[aria-pressed='true'] .record-glyph {
+  background: linear-gradient(90deg, var(--accent) 0 36%, transparent 36% 64%, var(--accent) 64%);
+}
+
+/* the LED ring: 24 LEDs, all dim until it plays; playing, they light amber with a bright head that chases around
+   (the ring turns once every 1.8 s / speed, as the record does) */
+:root[data-skin='studio'] .record-disc {
+  inset: -9px;
+  border-radius: 50%;
+  background: var(--led-off);
+  box-shadow: none;
+  -webkit-mask-image: repeating-conic-gradient(#000 0 8deg, transparent 8deg 15deg), radial-gradient(farthest-side, transparent calc(100% - 7px), #000 calc(100% - 6px));
+  mask-image: repeating-conic-gradient(#000 0 8deg, transparent 8deg 15deg), radial-gradient(farthest-side, transparent calc(100% - 7px), #000 calc(100% - 6px));
+  -webkit-mask-composite: source-in;
+  mask-composite: intersect;
+}
+
+:root[data-skin='studio'] .play[aria-pressed='true'] .record-disc {
+  background: conic-gradient(from 0deg, #fff1c2 0deg, var(--led-amber) 40deg, #7a5200 200deg, #3f2c00 359deg);
+}
+
+:root[data-skin='studio'] .play-word {
+  font-weight: 600;
+  font-stretch: 100%;
+  font-size: 0.95rem;
+  letter-spacing: 0.14em;
+}
+
+/* the time on an amber LCD */
+:root[data-skin='studio'] .transport .time {
+  font-family: var(--font-lcd);
+  font-weight: 400;
+  font-size: 1.7rem;
+  line-height: 1.1;
+  letter-spacing: 0.02em;
+  color: var(--lcd-ink);
+  background: var(--lcd-bg);
+  padding: 3px 10px 1px;
+  border: 1px solid #000;
+  border-radius: 3px;
+  box-shadow: inset 0 2px 4px rgba(0, 0, 0, 0.85);
+  text-shadow: 0 0 7px rgba(255, 176, 0, 0.55);
+}
+
+/* ---- loops: channel strips with a coloured LED stripe; stamps: three-LED meters ---- */
+
+:root[data-skin='studio'] .region {
+  border-radius: 6px;
+  border: 1px solid #0b0b0c;
+  border-left: 7px solid var(--loop-color, var(--rule));
+  background: var(--panel-2);
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.07),
+    -6px 0 14px -8px var(--loop-color, transparent);
+}
+
+:root[data-skin='studio'] .region:hover {
+  transform: none;
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.07),
+    -6px 0 14px -6px var(--loop-color, transparent);
+}
+
+:root[data-skin='studio'] .region.selected {
+  border-color: var(--accent);
+  border-left-color: var(--loop-color, var(--accent));
+  box-shadow: 0 0 0 1px var(--accent);
+}
+
+:root[data-skin='studio'] .loop-label {
+  border-radius: 6px;
+  border: 1px solid #000;
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.35);
+}
+
+:root[data-skin='studio'] .loop-label::after {
+  display: none;
+}
+
+:root[data-skin='studio'] .loop-play {
+  border-radius: 6px;
+  border-color: #000;
+  background: linear-gradient(180deg, #30343a, #24272c);
+  color: var(--ink);
+}
+
+:root[data-skin='studio'] .loop-play[aria-pressed='true'] {
+  background: var(--accent);
+  color: var(--on-accent);
+}
+
+:root[data-skin='studio'] .region-title strong,
+:root[data-skin='studio'] .cut-head strong {
+  font-stretch: 100%;
+  letter-spacing: 0.12em;
+  font-weight: 600;
+}
+
+:root[data-skin='studio'] .cut {
+  border-radius: 6px;
+  border: 1px solid #0b0b0c;
+  border-left: 7px solid var(--ink-soft);
+  background: var(--panel-2);
+}
+
+:root[data-skin='studio'] .cut:hover {
+  transform: none;
+}
+
+:root[data-skin='studio'] .cut.selected {
+  border-color: var(--accent);
+  border-left-color: var(--ink-soft);
+}
+
+:root[data-skin='studio'] .cut-glyph {
+  border-radius: 4px;
+}
+
+/* the seam stamp is a three-LED meter and its label: CLEAN 3 green, OK 2 amber, ROUGH 1 red */
+:root[data-skin='studio'] .chip {
+  transform: none;
+  -webkit-mask-image: none;
+  mask-image: none;
+  box-shadow: inset 0 2px 3px rgba(0, 0, 0, 0.7);
+  background: #0b0b0c;
+  border: 1px solid #000;
+  border-radius: 3px;
+  padding: 2px 9px 1px 8px;
+  font-family: var(--font-body);
+  font-stretch: 100%;
+  font-weight: 600;
+  font-size: 0.74rem;
+  letter-spacing: 0.12em;
+  line-height: 1.5;
+}
+
+:root[data-skin='studio'] .chip::before {
+  content: '';
+  display: inline-block;
+  width: 33px;
+  height: 9px;
+  margin-right: 7px;
+  vertical-align: -0.05em;
+  background-repeat: no-repeat;
+  background-size: 33px 9px;
+}
+
+:root[data-skin='studio'] .chip-clean::before {
+  background-image:
+    radial-gradient(circle at 4.5px 4.5px, var(--led-green) 0 3.4px, transparent 3.9px),
+    radial-gradient(circle at 16.5px 4.5px, var(--led-green) 0 3.4px, transparent 3.9px),
+    radial-gradient(circle at 28.5px 4.5px, var(--led-green) 0 3.4px, transparent 3.9px);
+  filter: drop-shadow(0 0 3px var(--led-green));
+}
+
+:root[data-skin='studio'] .chip-ok::before {
+  background-image:
+    radial-gradient(circle at 4.5px 4.5px, var(--led-amber) 0 3.4px, transparent 3.9px),
+    radial-gradient(circle at 16.5px 4.5px, var(--led-amber) 0 3.4px, transparent 3.9px),
+    radial-gradient(circle at 28.5px 4.5px, var(--led-off) 0 3.4px, transparent 3.9px);
+  filter: drop-shadow(0 0 3px var(--led-amber));
+}
+
+:root[data-skin='studio'] .chip-rough::before {
+  background-image:
+    radial-gradient(circle at 4.5px 4.5px, var(--led-red) 0 3.4px, transparent 3.9px),
+    radial-gradient(circle at 16.5px 4.5px, var(--led-off) 0 3.4px, transparent 3.9px),
+    radial-gradient(circle at 28.5px 4.5px, var(--led-off) 0 3.4px, transparent 3.9px);
+  filter: drop-shadow(0 0 3px var(--led-red));
+}
+
+/* suggestions read like a pattern list: numbered steps, striped rows */
+:root[data-skin='studio'] .suggestion {
+  border-radius: 3px;
+  border-bottom: 1px solid var(--rule);
+}
+
+:root[data-skin='studio'] .suggestion:nth-child(odd) {
+  background: color-mix(in srgb, var(--panel-2) 70%, transparent);
+}
+
+:root[data-skin='studio'] .suggestion:hover {
+  transform: none;
+  box-shadow: none;
+  background: var(--panel-2);
+}
+
+:root[data-skin='studio'] .suggestion-rank {
+  font-family: var(--font-lcd);
+  font-stretch: 100%;
+  font-weight: 400;
+  font-size: 1.5rem;
+  line-height: 1;
+  color: var(--lcd-ink);
+}
+
+:root[data-skin='studio'] .stars {
+  color: var(--accent);
+}
+
+:root[data-skin='studio'] .length-arrow {
+  color: var(--accent);
+}
+
+:root[data-skin='studio'] .big {
+  font-family: var(--font-lcd);
+  font-weight: 400;
+  letter-spacing: 0;
+  font-size: clamp(2rem, 8vw, 2.9rem);
+  color: var(--lcd-ink);
+  text-shadow: 0 0 8px rgba(255, 176, 0, 0.5);
+}
+
+:root[data-skin='studio'] .length-figures {
+  display: inline-flex;
+  align-items: baseline;
+  padding: 2px 14px 0;
+  background: var(--lcd-bg);
+  border: 1px solid #000;
+  border-radius: 4px;
+  box-shadow: inset 0 2px 5px rgba(0, 0, 0, 0.85);
+}
+
+:root[data-skin='studio'] .length-caption {
+  font-variant-caps: normal;
+  text-transform: uppercase;
+  letter-spacing: 0.14em;
+  font-size: 0.72rem;
+}
+
+/* ---- waveform, strip, drop zone ---- */
+
+:root[data-skin='studio'] .wave-host {
+  border-radius: 4px;
+  background: var(--lcd-bg);
+  border: 1px solid #000;
+  box-shadow: inset 0 2px 5px rgba(0, 0, 0, 0.85);
+}
+
+:root[data-skin='studio'] .tl-bar {
+  height: 28px;
+  border: 1px solid #000;
+  border-radius: 4px;
+  background: #0b0b0c;
+  box-shadow: inset 0 2px 4px rgba(0, 0, 0, 0.85);
+}
+
+:root[data-skin='studio'] .tl-ending {
+  border-radius: 4px;
+}
+
+:root[data-skin='studio'] .tl-block {
+  line-height: 28px;
+  background: #3a3d42;
+  box-shadow: inset 1px 0 0 #0b0b0c;
+}
+
+:root[data-skin='studio'] .tl-block.bridge {
+  background-color: #3a3d42;
+}
+
+:root[data-skin='studio'] .progress .track {
+  height: 10px;
+  border: 1px solid #000;
+  border-radius: 2px;
+  background: #0b0b0c;
+}
+
+:root[data-skin='studio'] .progress .fill {
+  background: repeating-linear-gradient(90deg, var(--accent) 0 6px, #0b0b0c 6px 8px);
+  border-radius: 0;
+}
+
+:root[data-skin='studio'] .dropzone {
+  width: min(100%, 560px);
+  margin: 16px auto 0;
+}
+
+:root[data-skin='studio'] .dropzone .sleeve-record,
+:root[data-skin='studio'] .dropzone .sleeve-ring,
+:root[data-skin='studio'] .dropzone .sleeve-side {
+  display: none;
+}
+
+:root[data-skin='studio'] .dropzone .sleeve-face {
+  aspect-ratio: auto;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  padding: 36px 24px;
+  border: 2px dashed var(--accent);
+  border-radius: 6px;
+  background: var(--lcd-bg);
+  box-shadow: inset 0 2px 5px rgba(0, 0, 0, 0.85);
+}
+
+:root[data-skin='studio'] .dropzone:hover .sleeve-face,
+:root[data-skin='studio'] .dropzone.drag .sleeve-face {
+  transform: none;
+  box-shadow:
+    inset 0 2px 5px rgba(0, 0, 0, 0.85),
+    0 0 0 2px var(--accent);
+}
+
+:root[data-skin='studio'] .dropzone .dz-title {
+  font-weight: 600;
+  font-stretch: 100%;
+  letter-spacing: 0.14em;
+  font-size: 1.05rem;
+  color: var(--lcd-ink);
+}
+
+:root[data-skin='studio'] .dropzone .dz-sub {
+  color: #d9b45a;
+}
+
+:root[data-skin='studio'] .dropzone.compact {
+  width: 100%;
+  margin: 0;
+}
+
+:root[data-skin='studio'] .dropzone.compact .sleeve-face {
+  flex-direction: row;
+  justify-content: flex-start;
+  align-items: center;
+  padding: 10px 16px;
+  border: 1px solid #000;
+  border-radius: 6px;
+}
+
+:root[data-skin='studio'] .dropzone.compact .sleeve-record {
+  display: none;
+}
+
+:root[data-skin='studio'] .dropzone.compact .dz-title {
+  font-size: 0.95rem;
+}
+
+/* ---- dialog ---- */
+
+:root[data-skin='studio'] dialog.export-dialog {
+  border: 1px solid #000;
+  border-radius: 8px;
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.1),
+    0 24px 60px rgba(0, 0, 0, 0.7);
+}
+
+:root[data-skin='studio'] .export-form h2 {
+  font-stretch: 100%;
+  letter-spacing: 0.16em;
+  font-weight: 600;
+}
+
+/* ---- a phone: a smaller pad and LCD, so that pad, time and Export share one row ---- */
+
+@media (max-width: 480px) {
+  :root[data-skin='studio'] .record {
+    width: 60px;
+    height: 60px;
+    margin: 8px;
+  }
+
+  :root[data-skin='studio'] .play {
+    gap: 2px;
+    padding: 0;
+  }
+
+  :root[data-skin='studio'] .play-word {
+    font-size: 0.72rem;
+  }
+
+  :root[data-skin='studio'] .transport .time {
+    font-size: 1.2rem;
+    padding: 2px 6px 0;
+    white-space: normal;
+  }
+
+  :root[data-skin='studio'] .card {
+    padding: 14px 14px;
+  }
+}
