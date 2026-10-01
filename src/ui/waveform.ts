@@ -57,6 +57,8 @@ export class WaveformView {
   private duration: number;
   private tracks = new Map<string, DragTrack>();
   private shiftDown = false;
+  /** Id of the region whose edge or body is being dragged right now, if any. */
+  private dragging: string | null = null;
   private disposers: (() => void)[] = [];
   private overlay: HTMLDivElement | null = null;
   private beatGroup: SVGGElement | null = null;
@@ -117,6 +119,16 @@ export class WaveformView {
     const onPointer = (e: PointerEvent): void => {
       this.shiftDown = e.shiftKey;
     };
+    // Fallback in case a drag ends without a 'region-updated' event.
+    const onPointerUp = (): void => {
+      window.setTimeout(() => (this.dragging = null), 0);
+    };
+    window.addEventListener('pointerup', onPointerUp, true);
+    window.addEventListener('pointercancel', onPointerUp, true);
+    this.disposers.push(() => {
+      window.removeEventListener('pointerup', onPointerUp, true);
+      window.removeEventListener('pointercancel', onPointerUp, true);
+    });
     window.addEventListener('keydown', onKey);
     window.addEventListener('keyup', onKey);
     window.addEventListener('pointermove', onPointer, true);
@@ -279,6 +291,9 @@ export class WaveformView {
           drag: true,
           resize: true,
         });
+      } else if (loop.id === this.dragging) {
+        // Mid-drag: the user's hand wins. The model catches up when the drag ends.
+        r.setOptions({ color });
       } else {
         r.setOptions({ start: loop.start, end: loop.end, color });
       }
@@ -292,7 +307,9 @@ export class WaveformView {
         r.element.style.outlineOffset = '-2px';
         r.element.dataset.regionId = loop.id;
       }
-      this.tracks.set(loop.id, { lastStart: loop.start, lastEnd: loop.end, rawStart: loop.start, rawEnd: loop.end });
+      if (loop.id !== this.dragging) {
+        this.tracks.set(loop.id, { lastStart: loop.start, lastEnd: loop.end, rawStart: loop.start, rawEnd: loop.end });
+      }
     });
   }
 
@@ -377,6 +394,7 @@ export class WaveformView {
   /** Live snapping and overlap clamping while a region is being dragged or resized. */
   private onRegionUpdate(region: Region, side?: 'start' | 'end'): void {
     if (region.id === HIGHLIGHT_ID) return;
+    this.dragging = region.id;
     const track =
       this.tracks.get(region.id) ??
       ({ lastStart: region.start, lastEnd: region.end, rawStart: region.start, rawEnd: region.end } as DragTrack);
@@ -434,6 +452,7 @@ export class WaveformView {
   }
 
   private onRegionUpdated(region: Region): void {
+    this.dragging = null;
     const track = this.tracks.get(region.id);
     if (track) {
       track.rawStart = region.start;

@@ -107,3 +107,39 @@ test('meter, bar-line shift and tempo override re-run the analysis', async ({ pa
   const halfBeats = await appState<number[]>(page, 's.analysis.beats');
   expect(halfBeats.length).toBeLessThan(beats0.length * 0.6);
 });
+
+test('a loop edge being dragged is not pulled back when the loops are re-applied mid-drag', async ({ page }) => {
+  // Seam reports arrive asynchronously and re-apply every loop to the waveform. Before the fix,
+  // one landing mid-drag reset the dragged edge to where the drag began.
+  const fixture = await makeFixture({ structure: 'ABABCA', barsPerSection: 4 });
+  await loadFixture(page, fixture);
+  await waitForAnalysis(page);
+  await dragSelect(page, 0.2, 0.5);
+  await page.keyboard.press('l');
+  await page.getByTestId('waveform').scrollIntoViewIfNeeded();
+  const [before] = await appState<Reg[]>(page, 's.regions');
+  const handle = page.locator('[part~="region-handle-right"]').first();
+  const box = (await handle.boundingBox())!;
+  const wave = (await page.getByTestId('waveform').boundingBox())!;
+  const secondsPerPx = fixture.duration / wave.width;
+  const x = box.x + box.width / 2;
+  const y = box.y + box.height / 2;
+
+  await page.keyboard.down('Shift'); // free drag, no snapping
+  await page.mouse.move(x, y);
+  await page.mouse.down();
+  await page.mouse.move(x + 20, y, { steps: 5 });
+  // re-apply the loops exactly as an arriving seam report does
+  await page.evaluate(() => {
+    const app = (window as unknown as { songLooper: { store: { get(): { regions: unknown[] }; set(p: object): void } } }).songLooper;
+    app.store.set({ regions: [...app.store.get().regions] });
+  });
+  await page.mouse.move(x + 40, y, { steps: 5 });
+  await page.mouse.up();
+  await page.keyboard.up('Shift');
+
+  const [after] = await appState<Reg[]>(page, 's.regions');
+  const moved = after!.end - before!.end;
+  expect(moved).toBeGreaterThan(30 * secondsPerPx);
+  expect(moved).toBeLessThan(50 * secondsPerPx);
+});
