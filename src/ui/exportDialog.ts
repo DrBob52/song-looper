@@ -88,7 +88,7 @@ export class ExportDialog {
       onDepth(depth: BitDepth): void;
     },
   ) {
-    this.nameInput = h('input', { attrs: { type: 'text', 'aria-label': 'File name', 'data-testid': 'export-name' }, class: 'grow' });
+    this.nameInput = h('input', { attrs: { type: 'text', 'aria-label': 'File name', 'data-testid': 'export-name', 'data-clip-ok': 'a file name is as long as the song\'s name: the field scrolls' }, class: 'grow' });
     this.bake = h('input', {
       attrs: { type: 'checkbox', 'data-testid': 'export-bake' },
       on: { change: () => this.refresh() },

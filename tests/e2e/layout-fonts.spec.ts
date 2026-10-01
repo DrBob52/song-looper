@@ -2,7 +2,7 @@ import { expect, test } from './fixtures';
 import type { Page } from '@playwright/test';
 import { SKINS } from '../../src/ui/skins';
 import type { SkinId } from '../../src/ui/skins';
-import { auditPage, loadBusyPage, settle } from './overlap';
+import { auditLoopDialog, auditPage, loadBusyPage, settle } from './overlap';
 import { fontsDir, loadedFamilies, useRealFonts } from './realFonts';
 
 // The overlap guard again, with the real fonts instead of the fallbacks: the layout is only known to be right if it is
@@ -38,7 +38,7 @@ for (const skin of SKINS) {
       await useRealFonts(context);
       const page = await context.newPage();
       await chooseSkin(page, skin.id);
-      await loadBusyPage(page);
+      await loadBusyPage(page, { selection: true });
       await expect(page.locator('html')).toHaveAttribute('data-skin', skin.id);
       await settle(page);
       const families = await loadedFamilies(page);
@@ -47,6 +47,12 @@ for (const skin of SKINS) {
         await page.setViewportSize({ width, height: 800 });
         await settle(page);
         problems.push(...(await auditPage(page, `${skin.id} ${mode} ${width}px, real fonts`)));
+      }
+      // and Export loop's dialog (SPEC-v1.3.md 7.1)
+      for (const width of [320, 380, 1100]) {
+        await page.setViewportSize({ width, height: 800 });
+        await settle(page);
+        problems.push(...(await auditLoopDialog(page, `${skin.id} ${mode} ${width}px, real fonts, Export loop dialog`)));
       }
       await context.close();
     }

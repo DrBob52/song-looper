@@ -64,6 +64,12 @@
   --wave: var(--ink);
   --wave-progress: var(--accent);
   --cursor: var(--accent-strong);
+  /* timestamps at a selection's edges: a small pill with a hairline in the accent (the same in both modes) */
+  --sel-label-bg: var(--panel);
+  --sel-label-ink: var(--ink);
+  --sel-label-line: var(--accent-strong);
+  --sel-label-radius: 4px;
+  --sel-label-weight: 500;
   --font-display: 'Geist', ui-sans-serif, system-ui, -apple-system, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif;
   --font-body: 'Geist', ui-sans-serif, system-ui, -apple-system, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif;
   --font-mono: 'Geist Mono', ui-monospace, 'SF Mono', Menlo, Consolas, 'Liberation Mono', monospace;
@@ -482,6 +488,15 @@
 
 :root[data-skin='pro'] .length-arrow {
   color: var(--ink-soft);
+}
+
+/* ---- the selection bar and Export loop's options: hairline panels, 8 px radii ---- */
+
+:root[data-skin='pro'] .selection-bar,
+:root[data-skin='pro'] .export-loop {
+  border-radius: 8px;
+  border: 1px solid var(--rule);
+  background: var(--bg);
 }
 
 /* ---- waveform and the extended timeline ---- */

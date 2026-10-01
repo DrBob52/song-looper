@@ -15,7 +15,8 @@ import { makeChordFixture, waitForAnalysis } from './helpers';
  *    sleeve's ring was one of those: it sat on top of the heading). Their boxes are worked out from the containing block.
  * Two of these may not intersect by more than 1 px, except a control and what is inside it. Nothing may stick out of the
  * card (`.card`, `.sleeve-face`, `.transport`, a dialog) it is in or out of the window, and a text field's value may not
- * be clipped by its own box. The turntable bar is checked on its own (it floats over the page by design) and, at the
+ * be clipped by its own box (bar a field marked `data-clip-ok="why"`: the export dialog's file name, which is as long as the
+ * song's name and scrolls). An open dialog is checked as a group of its own (see `auditLoopDialog`). The turntable bar is checked on its own (it floats over the page by design) and, at the
  * bottom of the page, against every card.
  *
  * Intentional overlaps are listed with `data-overlap-ok="why"` on the element, which exempts that element and its own
@@ -77,7 +78,8 @@ export function audit(): string[] {
         }
       }
       if (rects.length) items.push({ el, kind: 'text', rects, group: groupOf(el) });
-      else if ((cs.position === 'absolute' || cs.position === 'fixed') && !el.classList.contains('sr-only')) {
+      // (a dialog is the container of what is in it, like a card, not a decoration: the browser makes an open modal `position: fixed`)
+      else if ((cs.position === 'absolute' || cs.position === 'fixed') && !el.classList.contains('sr-only') && !el.matches('dialog')) {
         const r = el.getBoundingClientRect();
         if (r.width > 4 && r.height > 4) items.push({ el, kind: 'decor', rects: [r], group: groupOf(el) });
       }
@@ -164,9 +166,10 @@ export function audit(): string[] {
       if (ox > 0 && oy > 0) problems.push(`selection timestamps overlap: ${a.textContent}  and  ${b.textContent}`);
     }
   });
-  // a typed value clipped by its own box
+  // a typed value clipped by its own box (except a field marked data-clip-ok="why", for a value that is as long as the user's
+  // own text: the file name in the export dialog, which holds the song's name and scrolls)
   for (const el of all) {
-    if (el instanceof HTMLInputElement && el.type === 'text' && visible(el) && el.scrollWidth > el.clientWidth + 1) {
+    if (el instanceof HTMLInputElement && el.type === 'text' && visible(el) && !el.hasAttribute('data-clip-ok') && el.scrollWidth > el.clientWidth + 1) {
       problems.push(`value clipped in ${label(el)} (${el.scrollWidth} > ${el.clientWidth})`);
     }
   }
@@ -211,8 +214,28 @@ export async function auditPage(page: Page, what: string): Promise<string[]> {
   return found.map((p) => `${what}: ${p}`);
 }
 
-/** The loaded state of SPEC-v1.3.md 1: a song with two loops (one bridged, one rough with a nearby suggestion), a cut, and an end point with a fade. */
-export async function loadBusyPage(page: Page): Promise<void> {
+/**
+ * Open Export loop's dialog on the first loop (it has Bridge on, so the dialog's note shows too), run the guard with it open,
+ * and close it again (SPEC-v1.3.md 7.1). Returns the problems.
+ */
+export async function auditLoopDialog(page: Page, what: string): Promise<string[]> {
+  await page.mouse.move(0, 0);
+  await page.getByTestId('export-loop').first().click();
+  await expect(page.getByTestId('export-dialog')).toBeVisible();
+  await expect(page.getByTestId('export-bridge-note')).toBeVisible();
+  await settle(page);
+  const found = await page.evaluate(audit);
+  await page.getByTestId('export-cancel').click();
+  await expect(page.getByTestId('export-dialog')).toBeHidden();
+  return found.map((p) => `${what}: ${p}`);
+}
+
+/**
+ * The loaded state of SPEC-v1.3.md 1: a song with two loops (one bridged, one rough with a nearby suggestion), a cut, and an end
+ * point with a fade. With `selection`, a span is also selected on the waveform (SPEC-v1.3.md 7.2: the selection bar and the
+ * timestamps at its edges), wide enough for two timestamps on a wide window and narrow enough for one on a phone.
+ */
+export async function loadBusyPage(page: Page, options: { selection?: boolean } = {}): Promise<void> {
   const fixture = await makeChordFixture({ progressions: { A: 'C G Am F', B: 'Dm Em F G' }, structure: 'ABABABAB' }, 'demo-chords.wav');
   await page.goto('/');
   await page.setInputFiles('[data-testid=file-input]', { name: fixture.name, mimeType: fixture.mimeType, buffer: fixture.buffer });
@@ -239,4 +262,8 @@ export async function loadBusyPage(page: Page): Promise<void> {
     a.setFade(6);
   });
   await expect(page.getByTestId('length-ending')).toContainText('fades over 6 s');
+  if (options.selection) {
+    await page.evaluate(() => (window as unknown as { songLooper: { store: { set(p: object): void } } }).songLooper.store.set({ selection: { start: 46.4, end: 57.2 } }));
+    await expect(page.getByTestId('selection-bar')).toBeVisible();
+  }
 }

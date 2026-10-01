@@ -10,7 +10,9 @@ Everything runs in the browser. There is no server, no API key and nothing is up
 *A synthetic chord-progression demo. Loop 1 has a bridge, so its seam reads Clean and the extended timeline shows
 the hatched bridge bars. Loop 2 ends one bar early on a chord change the song never makes: Rough, with a cleaner
 loop suggested nearby. A cut takes four seconds out of the middle (the hatched span on the waveform and the scissors on
-the timeline), and the song ends early, fading out over six seconds. At 1100 px and wider the page is two columns.*
+the timeline), and the song ends early, fading out over six seconds. A span is selected on the waveform, so its bar (typed
+start and end, length, Add as loop, Cut, Clear) and the timestamps at its edges show. At 1100 px and wider the page is two
+columns: Your loops with Suggested loops under it, and Cuts, Ending and Length beside them.*
 
 | Dark | Phone (380 px) | Phone, dark |
 |---|---|---|
@@ -45,6 +47,12 @@ Every look also has a phone picture next to these in `docs/themes/` (`<look>-<mo
   beats; hold Shift to turn snapping off). Loops cannot overlap.
 - Each loop has its own start and end, typed to the millisecond (see [Exact loop times](#exact-loop-times)), and
   its own repeat count (1 to 9,999). Or set a target length and let the app choose repeat counts.
+- A selection on the waveform has its own bar with the start and end to type, its length, and Add as loop, Cut and Clear,
+  and timestamps at its edges. See [The selection bar](#the-selection-bar).
+- Saves any one loop as an audio file of its own, repeated as often as you like and ready to loop in a DAW or sampler.
+  See [Export a loop](#export-a-loop).
+- Suggested loops is a card you can fold away to its header; it sits directly under Your loops. See
+  [Suggested loops: the toggle and where it sits](#suggested-loops-the-toggle-and-where-it-sits).
 - Cuts spans out of the song with `X` (or **Cut selection**): the extended song skips them, joined with the same kind of
   crossfade as a loop's seam. See [Cuts](#cuts).
 - Ends the extended song early at a time you type, and fades out into it, or trims it to exactly the target length.
@@ -62,8 +70,8 @@ Every look also has a phone picture next to these in `docs/themes/` (`<look>-<mo
 - Exports 16-bit or 24-bit PCM or 32-bit float WAV.
 
 Keyboard: `Space` play/pause, `L` add a loop at the selection (or at the playhead), `X` cut the selection (or one bar at
-the playhead), `I` / `O` set the start / end of the selected loop or cut (or of a new loop) to the playhead,
-`Delete` remove the selected loop or cut, `Esc` clear the selection.
+the playhead), `I` / `O` set the start / end of the selected loop or cut (or of the selection, when none is selected) to
+the playhead, `Delete` remove the selected loop or cut, `Esc` clear the selection.
 In a number field: `Up` / `Down` step (`Shift` for 10 times as much, `Alt` for a tenth), `Enter` or leaving the field
 applies, `Esc` puts the old value back. The mouse wheel never changes a number.
 
@@ -80,6 +88,59 @@ dragging an edge on the waveform). Because smoothing would move the edge, the lo
 when you type, nudge or set from the playhead, and a notice says so. Turning it back on lets the app move the join
 again. As in every version, the renderer still moves a loop edge by at most 2 ms to the nearest zero crossing so the
 join doesn't click; the fields and the timeline show the time you gave.
+
+### The selection bar
+
+While a span is selected on the waveform (before `L` or `X` turns it into a loop or a cut), a bar sits directly under the
+waveform: **Start** and **End** time fields, the **Length** (seconds and bars), and **Add as loop** (`L`), **Cut** (`X`) and
+**Clear** (`Esc`). It is hidden when nothing is selected. While you drag a selection out, the fields and the timestamps
+follow the mouse.
+
+Type a time (`75`, `75.25`, `1:15.250`) and press `Enter` (or leave the field) and the selection moves there at once. Typed
+times are exact and never snapped to bars or beats (only dragging snaps), the parsing and the messages are those of the loop
+fields (`Past the end of the song (1:05.000).`, `End must be after start (0:12.335).`), `Up` / `Down` step by 10 ms, and `Esc`
+puts the old time back. A selection may sit over a loop or a cut; Add as loop clamps it into the free song, and Cut refuses it
+naming what it hits. `I` and `O` set the selection's edges from the playhead when no loop or cut is selected, and the fields
+follow.
+
+Small mono **timestamps** (`1:09.600`) sit at the selection's two edges on the waveform, at its middle height (the one band
+the loops' and cuts' labels at the top and the beat badges at the bottom leave free): the start to the left of its edge, the
+end to the right. They flip to the inside near the edges of the song so that they never run off the waveform, and a selection
+narrower than the label `1:09.600–1:12.000` gets that one combined label instead of two. They are drawn in the look's tokens
+(`--sel-label-*`: Studio's LCD, Club's neon pill, Space's phosphor, Pro's hairline pill).
+
+### Suggested loops: the toggle and where it sits
+
+The **Suggested loops** card sits directly under **Your loops** in every layout (see [Layout](#layout) for the order). Its
+heading is a disclosure button with a chevron and the count, `Suggested loops (12)` (`Finding loops…` while the song is
+analysed; the toggle works then too), with `aria-expanded` and `aria-controls`. Closed, the card is only its header, so a
+song with dozens of suggestions no longer pushes Cuts, Ending and Length down the page. It is open by default and the choice is
+kept across visits in `localStorage` (`song-looper-suggestions-open`, try/catch like the look; with storage blocked the card is
+open and the toggle still works). Preview, Audition seam, Add and Show the whole side behave as before.
+
+### Export a loop
+
+Every loop card has an **Export loop** button that saves that loop as an audio file of its own. The dialog is the export
+dialog (bit depth, the speed and pitch bake box, the file name) plus:
+
+- **Repeats in the file** (1 to 9,999, default 1): N passes of the loop with the app's normal seam between them. It is the same
+  renderer as the preview and the extended export, over a plan with just that loop: the file is exactly the stretch of
+  `renderRange` that starts at the loop and holds its repeats. A loop whose **Smooth seam** has rotated it contributes the
+  rotated span (`loopStart` to `loopEnd` of its seam plan), with its own jump and fade between passes.
+- **Loop-ready file** (default on): the file's last W samples are crossfaded with the song just before the loop's start (the
+  `orig[start - W, start)` stretch), equal-power with the adaptive law every seam uses, so a DAW, sampler or player that repeats
+  the file end-to-start hears the song's own lead-in into the loop's first sample instead of a jump. W is the **Seam fade**
+  setting, never under 10 ms. Where the song does not reach back W samples (a loop at the very start) the missing part is
+  silence, so that stretch fades out.
+- **Not in the file:** a loop's **Bridge** (the dialog says so when Bridge is on), and the song's cuts and ending.
+- The default name is `<song name> - Loop <n> (<start>-<end>).wav`, with the times as `m.ss.mmm` (`My Song - Loop 2
+  (1.09.600-1.12.000).wav`): a colon is not allowed in a Windows file name, and any other character a file system refuses is
+  replaced.
+
+It goes through the same piece-by-piece export as the song (about 10 s at a time, nothing held whole, Cancel works), the same WAV
+size check (9,999 repeats of a long loop can be more than a WAV holds, and the dialog says so before Export), and
+`src/audio/save.ts` (zipped inside a claude.ai artifact). With speed and pitch baked in, the whole file is stretched after the
+wrap crossfade, so the join is as clean as the stretch leaves it.
 
 ### Cuts
 
@@ -201,7 +262,15 @@ npm run demo-song    # writes tests/fixtures/demo-song.generated.wav (git-ignore
   different way (walk the song, lay loops and cuts in order, decide a jump by "does this part start where the last one
   ended") that `renderRange` must equal sample for sample, whole and in ranges, with cuts at the start, the middle
   and the end, the ending alone and with a fade longer than a piece; the target solver with a minimum; and the
-  contrast of every look's tokens.
+  contrast of every look's tokens. The addendum (loop export, selection bar) added: the loop file is the matching span of
+  `renderRange` for a plan with just that loop, bit for bit with Loop-ready off (1, 2, 4 and 7 repeats; a plain loop, a
+  smoothed and rotated one, one with a bridge, loops at the very start and end of the song), pieces of any size join into the
+  whole file, and Loop-ready changes only the last W samples (W is the Seam fade, at least 10 ms) by the equal-power law
+  (checked against the formula) and fades out where the song does not reach back far enough; a loop-ready file joined to
+  itself steps by 0.012 where the song's own largest step is 0.057 (the plain file jumps by 0.121, over twice that), and nothing
+  within W of the join steps more than the song does; the export pieces equal the loop file encoded in one go at every bit
+  depth, the WAV cap check refuses 9,999 repeats of a long loop before writing anything; file names are sanitised; and the
+  placement of the timestamps at a selection's edges over a sweep of selections and widths, and the selection's messages.
 - **End to end (Playwright, Chromium)**: load a generated WAV, select a span, add a loop, repeat it, export,
   and check the downloaded WAV's header and duration (and decode it with `decodeAudioData`); suggestions, preview,
   seam audition, snapping, target-length mode, the timeline strip, live speed/pitch (through the real AudioWorklet),
@@ -219,7 +288,17 @@ npm run demo-song    # writes tests/fixtures/demo-song.generated.wav (git-ignore
   shortens the song under it); the two-column layout at 1100 px and the one-column order below it; the picker (every
   look sets `data-skin`, survives a reload, keyboard use, no errors, playback continues through a switch) and each
   look's tokens and signature details (Pro's hairlines, Studio's LEDs and LCD, Club's beat pulse, Space's scope and
-  orbit); and fonts blocked in every look.
+  orbit); and fonts blocked in every look. The addendum added: the Suggested loops toggle (the count, collapsing to the
+  header, kept across a reload, `Finding loops…` while the song is analysed, the keyboard, blocked storage) and the new card
+  order in both layouts; the selection bar (it appears under the waveform with the dragged span's times, length and
+  buttons, follows the drag live, typed times move the region exactly and never snap, `Esc` and bad values, Add as loop,
+  Cut, `L` and `X` use the typed times exactly, `I` and `O`, the timestamps flipped inside at the song's edges and
+  combined when narrow, a 320 px phone) and the layout guard with a selection (it also checks the timestamps, which live
+  inside the waveform's shadow tree); and Export loop (the dialog's options and default name, a name with a colon and
+  other characters a file system refuses, 1 repeat loop-ready and 4 repeats with the durations and the first pass equal
+  to the 1-repeat file, the loop-ready join against a loop whose edges do not match, the Smooth seam plan's rotated span
+  with a bridge left out, the repeats' validation, estimate and WAV cap, baked speed and pitch, Cancel, and a zip inside
+  an artifact).
 
 Playwright is pinned to 1.56.x so that its Chromium revision matches the browser pre-installed in this
 environment under `PLAYWRIGHT_BROWSERS_PATH`. To use another browser, set `CHROMIUM_PATH` to its executable.
@@ -377,20 +456,30 @@ each their own seam) is not part of this version.
 
 ## Layout
 
-Below 1100 px the page is one column, in the order of the page: song, waveform and timeline, Your loops, Cuts, Ending,
-Suggestions, Length. From **1100 px** the waveform, its timeline and the turntable bar stay full width, and under them
-the cards split into two columns (about 3:2): **Your loops, Cuts and Ending** on the left, **Suggestions and Length**
-on the right, each column its own height (no card is stretched to its neighbour). Tab order is the reading order in both
-layouts. There is no horizontal scroll from 320 to 2560 px, and the sticky bar never covers a card at the bottom of the
-page: the page's bottom padding follows the bar's height, and the bar is hidden until a song is loaded.
+Below 1100 px the page is one column, in the order of the page: song, waveform (with the selection bar under it while there is
+a selection), Your loops, Suggested loops, Cuts, Ending, Length, extended timeline. From **1100 px** the waveform, its timeline
+and the turntable bar stay full width, and under them the cards split into two columns (about 3:2): **Your loops and, directly
+under it, Suggested loops** on the left, **Cuts, Ending and Length** on the right, each column its own height (no card is
+stretched to its neighbour). Tab order is the reading order in both layouts. There is no horizontal scroll from 320 to 2560 px,
+and the sticky bar never covers a card at the bottom of the page: the page's bottom padding follows the bar's height, and the
+bar is hidden until a song is loaded.
+
+**Suggested loops** is a collapsible card (see [Suggested loops: the toggle and where it sits](#suggested-loops-the-toggle-and-where-it-sits)):
+closed, only its header shows.
 
 `tests/e2e/layout-overlap.spec.ts` runs a layout guard (`tests/e2e/overlap.ts`) in every look and mode: the empty page at
 380, 768, 1100 and 1600 px, and a busy one (two loops, a cut, an ending with a fade, then error messages showing and the
-advanced and speed panels open) at 380, 1100 and 1600 px. The fonts-blocked run (`skins-fonts.spec.ts`: every look, the
+advanced and speed panels open, then Suggested loops collapsed, then a wide and a narrow selection with the selection bar and
+its timestamps) at 380, 1100 and 1600 px. The fonts-blocked run (`skins-fonts.spec.ts`: every look, the
 Google Fonts hosts aborted) and the real-fonts run (`layout-fonts.spec.ts`, with `FONTS_DIR`) add 320 px and 2560 px, and
 the real-fonts run 768 px too. The guard finds text that overlaps text or a control, anything that sticks out of its card
 or the window, a text field whose value is clipped, a decoration sitting on text, and a bar that covers a card.
-Intentional overlaps (the sleeve's record, the timeline playhead) are listed with `data-overlap-ok`.
+Intentional overlaps (the sleeve's record, the timeline playhead) are listed with `data-overlap-ok`. Export loop's dialog is
+checked too (with a bridged loop, so its note shows): at 380, 1100 and 1600 px in the loaded run, at 320 and 1100 px in the
+fonts-blocked run and at 320, 380 and 1100 px in the real-fonts run. The dialog is a container like a card (the browser makes
+an open modal `position: fixed`, so the guard does not count it as a decoration), and the file-name field is marked
+`data-clip-ok` because a name is as long as the song's and scrolls (the default `<song> - Loop <n> (<start>-<end>).wav` is
+longer than the field on a phone).
 
 Running it with the real fonts found two layout bugs that the fallback fonts hid, both at 320 px: Export overlapping the
 time in the turntable bar, and the speed slider pushing its number out of the bar. Both are fixed (a smaller Export button
@@ -430,7 +519,8 @@ the fonts-blocked tests check that for every look (no overlap, no errors, playba
 
 **Contrast.** `npm run contrast` (and a unit test) reads the tokens of every look and mode from the CSS and checks WCAG AA
 for the text colours (ink, soft ink, the OK, warning and error text, the red label text) on the panel and on the page,
-the text on the red label, on the sticker and on each loop's colour: 144 pairs, none under the 4.5:1 minimum. Where a look's
+the text on the red label, on the sticker and on each loop's colour, and the timestamps at a selection's edges on their tag (with
+the tag's outline against it at 3:1): 160 pairs (152 of text), none under its minimum. Where a look's
 specified accent was a hair under AA with white text (Pro's blue 4.4987:1, Space's orange 3.4:1 and teal 4.07:1) the text
 and solid buttons use a slightly darker `--accent-strong`, and the specified colour stays for the rings, the orbit and
 the first loop. The lowest pair of each look is
@@ -471,11 +561,13 @@ index.html
 src/
   main.ts  app.ts  model.ts  plan.ts  grid.ts
   ui/        dropzone, waveform, suggestionsPanel, regionsPanel, cutsPanel, endingPanel, edgeEditor, lengthPanel,
-             timelineStrip, transport, exportDialog, analysisControls, seamText, numberField, holdRepeat, record,
-             loopColors, layout (the two-column arrangement), skins, skinPicker (the looks)
+             timelineStrip, transport, exportDialog (also Export loop), analysisControls, seamText, numberField, holdRepeat,
+             record, loopColors, layout (the two-column arrangement), skins, skinPicker (the looks),
+             selectionBar, selectionLabels (where the timestamps at a selection's edges go)
   skins/     pro.css studio.css club.css space.css   (Vinyl's tokens are at the top of style.css)
   audio/     decode (+ sniff), player, render (renderRange), preview, stream, chunkSource, target, stretch,
-             wav, zip, exportPieces, blobAssembler, save, renderClient/worker/protocol
+             wav, zip, exportPieces, loopExport (one loop as a file), blobAssembler, save, renderClient/worker/protocol
+  util/      time, format, store, filename
   analysis/  stft onset tempo beats bars features ssm sections candidates pipeline config worker client
              harmony seam smooth nearby bridge bridgePlan   (seams, see "How seams are smoothed")
   label/     provider.ts   (LabelProvider interface, no-op default)
@@ -507,6 +599,12 @@ docs/        screenshots, and themes/ (one picture per look, mode and width)
   are narrower or wider than the real faces but never overlap (the fonts-blocked tests check that).
 - Typed loop times are exact in the interface; the renderer still moves an edge by at most 2 ms to the nearest zero
   crossing.
+- A loop file (Export loop) holds the loop only: no bridge, no cuts, no ending. Loop-ready is exact for the file as it is; with
+  speed and pitch baked in the whole file is stretched after the wrap crossfade, so the join is as clean as the stretch
+  leaves it. The wrap crossfade takes its W from the Seam fade setting (at least 10 ms), not from a Smooth seam's own fade.
+  The loop's edges still snap to a zero crossing by at most 2 ms, like everywhere else.
+- Cut rows in the narrower side column (Cuts, Ending, Length) keep Start and End one under the other: an edge's field, button
+  and nudges need about 330 px, and the 2fr column is never wider than about 550 px.
 - Files with more than two channels are stretched pair by pair when speed or pitch is baked in.
 - Optional AI labelling of sections and saving loops between sessions are not in v1 (`src/label/provider.ts` is
   the extension point for the former).

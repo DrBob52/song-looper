@@ -30,12 +30,15 @@ async function choose(page: Page, skin: string): Promise<void> {
   }, skin);
 }
 
-/** A loaded song with its suggestions, two loops (one with a bridge, one rough with a cleaner loop suggested), a cut, and an end point with a fade. */
+/** A loaded song with its suggestions, two loops (one with a bridge, one rough with a cleaner loop suggested), a cut, an end point with a fade, and a span selected on the waveform. */
 async function setUp(page: Page, skin: string): Promise<string[]> {
   await choose(page, skin);
   await loadBusyPage(page);
   await page.getByTestId('mode-extended').click();
   await expect(page.getByTestId('seam-summary').nth(1)).toBeVisible();
+  // a span selected on the waveform, so that the selection bar and the timestamps at its edges are in every picture
+  await page.evaluate(() => (window as unknown as { songLooper: { store: { set(p: object): void } } }).songLooper.store.set({ selection: { start: 46.4, end: 57.2 } }));
+  await expect(page.getByTestId('selection-bar')).toBeVisible();
   await page.mouse.move(2, 2); // no row left hovered
   await settle(page);
   await page.waitForTimeout(500);
@@ -107,8 +110,9 @@ for (const skin of SKINS) {
       console.warn(`docs/themes/${skin.id}-${mode}-wide.png: fonts ${wideFonts.join(', ') || 'fallbacks'}`);
       await wide.close();
 
-      // the top of the page: the masthead with its picker, the song, the waveform and the turntable bar
-      const phone = await browser.newContext({ viewport: { width: PHONE, height: 820 }, colorScheme: mode, deviceScaleFactor: 2 });
+      // the top of the page: the masthead with its picker, the song, the waveform with its selection bar under it, and the
+      // turntable bar (the window is tall enough for the bar to sit under the selection bar, not on it)
+      const phone = await browser.newContext({ viewport: { width: PHONE, height: 1060 }, colorScheme: mode, deviceScaleFactor: 2 });
       await useRealFonts(phone);
       const phonePage = await phone.newPage();
       const phoneFonts = await setUp(phonePage, skin.id);

@@ -118,7 +118,8 @@ export interface Row {
 
 /**
  * Text on its backgrounds: ink, soft ink and the stamp texts on the panel and the page; the accent as text on the panel;
- * the text on a solid accent button, on every loop colour (the number on a loop's label), on a section sticker.
+ * the text on a solid accent button, on every loop colour (the number on a loop's label), on a section sticker, and the
+ * timestamps at a selection's edges on their tag.
  */
 export function checkSkin(spec: SkinSpec): Row[] {
   const rows: Row[] = [];
@@ -135,6 +136,9 @@ export function checkSkin(spec: SkinSpec): Row[] {
     add('--on-red', '--label-red');
     add('--sticker-ink', '--mustard');
     for (let i = 1; i <= 5; i++) add(`--loop-${i}-ink`, `--loop-${i}`);
+    // the timestamps at a selection's edges: their text on their tag, and the tag's outline against it (3:1 for a UI edge)
+    add('--sel-label-ink', '--sel-label-bg');
+    add('--sel-label-line', '--sel-label-bg', 3);
   }
   return rows;
 }

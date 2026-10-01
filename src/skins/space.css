@@ -71,6 +71,14 @@
   --wave: #7cffb2;
   --wave-progress: #d9ffe9;
   --cursor: #ff9a5c;
+  /* timestamps at a selection's edges: readouts on the scope's glass, phosphor on black, in both modes */
+  --sel-label-bg: var(--scope-bg);
+  --sel-label-ink: var(--scope-ink);
+  --sel-label-line: #7cffb2;
+  --sel-label-radius: 999px;
+  --sel-label-spacing: 0.04em;
+  --sel-label-shadow: 0 0 10px -2px rgba(124, 255, 178, 0.5);
+  --sel-label-text-shadow: 0 0 6px rgba(124, 255, 178, 0.55);
   --font-display: 'Michroma', 'Eurostile', 'Microgramma', 'Arial Black', 'Helvetica Neue', Arial, sans-serif;
   --font-body: 'Exo 2', ui-sans-serif, system-ui, -apple-system, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif;
   --font-mono: 'Share Tech Mono', ui-monospace, 'SF Mono', Menlo, Consolas, 'Liberation Mono', monospace;
@@ -541,6 +549,20 @@
   font-variant-caps: normal;
   letter-spacing: 0.08em;
   font-size: 0.82rem;
+}
+
+/* ---- the selection bar and Export loop's options: moulded panels with a chrome hairline ---- */
+
+:root[data-skin='space'] .selection-bar,
+:root[data-skin='space'] .export-loop {
+  border-radius: 18px;
+  border: 1px solid color-mix(in srgb, var(--chrome-2) 50%, var(--panel));
+  background: var(--panel-2);
+  box-shadow: inset 0 2px 5px rgba(255, 255, 255, 0.4);
+}
+
+:root[data-skin='space'] .disclosure .chevron {
+  color: var(--accent-strong);
 }
 
 /* ---- the waveform window: a CRT scope with a rounded chrome bezel, dark glass, a phosphor trace and scanlines ---- */

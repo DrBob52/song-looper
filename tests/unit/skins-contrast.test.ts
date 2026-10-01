@@ -16,7 +16,7 @@ describe.each(existingSpecs())('skin $id', (spec) => {
 
   it('defines every token it uses, as a literal or through another of its tokens', () => {
     for (const { tokens } of skinModes(spec)) {
-      for (const name of ['--paper', '--sleeve', '--ink', '--ink-soft', '--rule', '--label-red', '--on-red', '--mustard', '--vinyl', '--ok-text', '--warn-text', '--bad-text']) {
+      for (const name of ['--paper', '--sleeve', '--ink', '--ink-soft', '--rule', '--label-red', '--on-red', '--mustard', '--vinyl', '--ok-text', '--warn-text', '--bad-text', '--sel-label-bg', '--sel-label-ink', '--sel-label-line']) {
         expect(() => resolve(tokens, name), `${spec.id} ${name}`).not.toThrow();
       }
       for (let i = 1; i <= 5; i++) {
