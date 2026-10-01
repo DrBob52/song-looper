@@ -124,11 +124,12 @@ npm run demo-song    # writes tests/fixtures/demo-song.generated.wav (git-ignore
   lands before a hit), micro-alignment (a +15 ms edge recovered within 2 ms, one onset in the seam window), the fade
   limit at poor harmony, the level step after a 3 dB crescendo, bridge search, render length and target solver, Undo,
   and how stale seam data is dropped when the tempo, meter or bar lines change. The long-song work has its own
-  tests: `renderRange` equals the same stretch of a reference full render sample for sample (plain, with a bridge,
-  with seam plans, level ramps and ramps that straddle a boundary, at several block sizes), the export pieces equal one
+  tests: `renderRange` equals the same stretch of a reference full render bit for bit (plain loops, seam plans with
+  bridges, level ramps and fades longer than the piece, loops at the song's edges, mono and three channels; ranges
+  around every jump, random short and long ranges, and consecutive pieces joined), the export pieces equal one
   full render (also with speed and pitch baked in), the WAV encoder and zip layout at the 4 GB edges (without
-  allocating the file), the number parser and formatter, and a chunked preview scheduler rendered through an
-  `OfflineAudioContext` (no gap and no click at a join, also at a different sample rate and with a seek). The design
+  allocating the file), the number parser and formatter, and the chunk scheduler of the live preview against a fake
+  audio context (each chunk starts when the last ends, three queued ahead, seek, speed, late renders). The design
   tokens have a WCAG contrast test (4.5:1 for text, 3:1 for stamp borders, both papers, both themes) and a check that
   the two dark blocks in `style.css` say the same thing.
 - **End to end (Playwright, Chromium)**: load a generated WAV, select a span, add a loop, repeat it, export,
@@ -138,8 +139,9 @@ npm run demo-song    # writes tests/fixtures/demo-song.generated.wav (git-ignore
   cases, a 380 px layout check in light and dark mode, saving as a claude.ai artifact, and serving the built site
   from a GitHub Pages style sub-path. v1.2 added: typed and nudged loop times, `I`/`O` keys and the Smooth seam
   notice; every number field (typing, steppers, slider sync, bad values); a long export that is checked piece by
-  piece and cancelled part way; the live preview (start fast, seek, change speed and pitch while it plays);
-  and the design (the record spins at 1.8 s / speed and stops at the same angle, reduced motion, no horizontal scroll
+  piece and cancelled part way; the live preview (plays and seeks at 500 repeats, changes speed and pitch while it
+  plays, and the scheduler run on an `OfflineAudioContext` must give the samples of `renderRange` over the same span:
+  identical at the song's own sample rate, no tick at any join at 48 kHz and 32 kHz); and the design (the record spins at 1.8 s / speed and stops at the same angle, reduced motion, no horizontal scroll
   at 380 px, nothing sticking out of its card, both themes, fonts blocked).
 
 Playwright is pinned to 1.56.x so that its Chromium revision matches the browser pre-installed in this
