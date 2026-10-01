@@ -46,6 +46,25 @@ interface DragTrack {
 
 const SVG_NS = 'http://www.w3.org/2000/svg';
 
+/**
+ * The waveform's colours, from the tokens of the current skin: `--wave` and `--wave-progress` (a second colour,
+ * `--wave-2` / `--wave-progress-2`, makes a gradient from top to bottom, which wavesurfer draws from an array) and
+ * `--cursor`. Falls back to the Vinyl values when a token is missing.
+ */
+function waveColors(): { wave: string | string[]; progress: string | string[]; cursor: string } {
+  const one = (name: string, second: string, fallback: string): string | string[] => {
+    const a = cssVar(name) || fallback;
+    const b = cssVar(second);
+    return b ? [a, b] : a;
+  };
+  const ink = cssVar('--ink') || '#1d1915';
+  return {
+    wave: one('--wave', '--wave-2', ink),
+    progress: one('--wave-progress', '--wave-progress-2', cssVar('--wave') || ink),
+    cursor: cssVar('--cursor') || cssVar('--label-red') || '#c6372c',
+  };
+}
+
 function hexToRgba(hex: string, alpha: number): string {
   const m = /^#?([0-9a-f]{6})$/i.exec(hex);
   if (!m) return hex;
@@ -84,12 +103,13 @@ export class WaveformView {
   ) {
     this.duration = duration;
     this.regions = RegionsPlugin.create();
+    const colors = waveColors();
     this.ws = WaveSurfer.create({
       container,
       height: 150,
-      waveColor: cssVar('--ink') || '#1d1915',
-      progressColor: cssVar('--ink') || '#1d1915',
-      cursorColor: cssVar('--label-red') || '#c6372c',
+      waveColor: colors.wave,
+      progressColor: colors.progress,
+      cursorColor: colors.cursor,
       cursorWidth: 2,
       normalize: true,
       interact: true,
@@ -151,16 +171,16 @@ export class WaveformView {
     const onScheme = (): void => this.refreshTheme();
     mq.addEventListener('change', onScheme);
     this.disposers.push(() => mq.removeEventListener('change', onScheme));
-    // A host page (claude.ai) can switch theme via data-theme on <html>.
+    // A host page (claude.ai) can switch theme via data-theme on <html>, and the user can switch skin via data-skin.
     const themeObserver = new MutationObserver(onScheme);
-    themeObserver.observe(document.documentElement, { attributes: true, attributeFilter: ['data-theme'] });
+    themeObserver.observe(document.documentElement, { attributes: true, attributeFilter: ['data-theme', 'data-skin'] });
     this.disposers.push(() => themeObserver.disconnect());
   }
 
   /** Re-read theme colours after a light/dark switch. */
   refreshTheme(): void {
-    const ink = cssVar('--ink') || '#1d1915';
-    this.ws.setOptions({ waveColor: ink, progressColor: ink, cursorColor: cssVar('--label-red') || '#c6372c' });
+    const colors = waveColors();
+    this.ws.setOptions({ waveColor: colors.wave, progressColor: colors.progress, cursorColor: colors.cursor });
     // loop colours, the selection and the highlight follow the theme too
     this.setRegions([...this.model.values()], this.selectedId, [...this.cutModel.values()]);
     const selection = this.findRegion(SELECTION_ID);
@@ -259,7 +279,7 @@ export class WaveformView {
       tag.textContent = s.label;
       tag.title = s.hint ? `Section ${s.label} (${s.hint})` : `Section ${s.label}`;
       tag.style.cssText =
-        'position:absolute;bottom:4px;left:3px;min-width:17px;height:17px;display:grid;place-items:center;font:700 10px/1 var(--font-mono, monospace);padding:0 3px;border-radius:9px;background:var(--mustard, #d6a03d);color:#1d1915;box-shadow:0 1px 1px rgba(0,0,0,.3);';
+        'position:absolute;bottom:4px;left:3px;min-width:17px;height:17px;display:grid;place-items:center;font:700 10px/1 var(--font-mono, monospace);padding:0 3px;border-radius:9px;background:var(--mustard, #d6a03d);color:var(--sticker-ink, #1d1915);box-shadow:0 1px 1px rgba(0,0,0,.3);';
       line.appendChild(tag);
       overlay.appendChild(line);
     }

@@ -12,7 +12,8 @@
     "typecheck": "tsc --noEmit",
     "test": "vitest run",
     "test:e2e": "playwright test",
-    "demo-song": "tsx scripts/make-demo-song.ts"
+    "demo-song": "tsx scripts/make-demo-song.ts",
+    "contrast": "tsx scripts/skin-contrast.ts"
   },
   "dependencies": {
     "@audio/decode-aac": "1.6.0",

@@ -1,0 +1,604 @@
+/*
+ * Skin: Clean pro tool (SPEC-v1.3.md 5.2). A calm modern DAW: hairline borders, no shadows on the cards, 8 px radii,
+ * generous spacing and one accent colour. Light and dark.
+ *
+ * Structure (the same as the Vinyl tokens in style.css): every token is defined first on the bare skin selector (the light
+ * values), then the dark values under prefers-color-scheme guarded by :not([data-theme='light']), then for
+ * [data-theme='dark'] (the two dark blocks say the same). The tokens use the spec's names (--bg, --panel, --accent, ...)
+ * and the component names (--paper, --sleeve, --label-red, ...) point at them.
+ *
+ * Contrast: the spec's accent #3d6df2 is 4.4987:1 with white, a hair under AA, so solid buttons and accent text use
+ * --accent-strong #3965e8 (5.0:1), and loop 1 is #3a69ee (4.7:1 with its white number). Everything else is as specified.
+ */
+
+:root[data-skin='pro'] {
+  color-scheme: light dark;
+  /* spec tokens, light */
+  --bg: #f5f6f8;
+  --panel: #ffffff;
+  --panel-2: #eef0f4;
+  --ink: #16181d;
+  --ink-soft: #5d6472;
+  --rule: #e2e5ea;
+  --accent: #3d6df2;
+  --accent-strong: #3965e8;
+  --on-accent: #ffffff;
+  /* the names the components use */
+  --paper: var(--bg);
+  --sleeve: var(--panel);
+  --label-red: var(--accent-strong);
+  --on-red: var(--on-accent);
+  --mustard: #f5a524; /* selection, section stickers: the only other colour */
+  --sticker-ink: #16181d;
+  --vinyl: var(--rule);
+  --ok: #30a46c;
+  --warn: #d68a00;
+  --bad: #e5484d;
+  --ok-text: #1e7f50;
+  --warn-text: #9a5b00;
+  --bad-text: #c42b31;
+  --loop-1: #3a69ee;
+  --loop-2: #e5484d;
+  --loop-3: #f5a524;
+  --loop-4: #30a46c;
+  --loop-5: #8e4ec6;
+  --loop-1-ink: #ffffff;
+  --loop-2-ink: #16181d;
+  --loop-3-ink: #16181d;
+  --loop-4-ink: #16181d;
+  --loop-5-ink: #ffffff;
+  --grid: rgba(22, 24, 29, 0.1);
+  --grid-bar: rgba(22, 24, 29, 0.32);
+  --wash: rgba(22, 24, 29, 0.05);
+  --shadow: none;
+  --shadow-lift: none;
+  --shadow-bar: 0 -10px 24px -14px rgba(22, 24, 29, 0.25);
+  --scrim: rgba(15, 17, 21, 0.45);
+  --region-alpha: 0.22;
+  --region-alpha-on: 0.36;
+  --cut-fill: rgba(22, 24, 29, 0.6);
+  --cut-line: rgba(255, 255, 255, 0.55);
+  --cut-ink: #ffffff;
+  --cut-label-bg: rgba(22, 24, 29, 0.75);
+  --grain: none;
+  --wave: var(--ink);
+  --wave-progress: var(--accent);
+  --cursor: var(--accent-strong);
+  --font-display: 'Geist', ui-sans-serif, system-ui, -apple-system, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif;
+  --font-body: 'Geist', ui-sans-serif, system-ui, -apple-system, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif;
+  --font-mono: 'Geist Mono', ui-monospace, 'SF Mono', Menlo, Consolas, 'Liberation Mono', monospace;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root[data-skin='pro']:not([data-theme='light']) {
+    color-scheme: dark;
+    --bg: #0f1115;
+    --panel: #171a20;
+    --panel-2: #1e222a;
+    --ink: #e8ebf0;
+    --ink-soft: #9aa3b2;
+    --rule: #262b33;
+    --accent: #7aa2ff;
+    --accent-strong: #7aa2ff;
+    --on-accent: #0f1115;
+    --mustard: #ffc15a;
+    --sticker-ink: #0f1115;
+    --ok: #5bd49c;
+    --warn: #ffc15a;
+    --bad: #ff7b7f;
+    --ok-text: #5bd49c;
+    --warn-text: #ffc15a;
+    --bad-text: #ff7b7f;
+    --loop-1: #7aa2ff;
+    --loop-2: #ff7b7f;
+    --loop-3: #ffc15a;
+    --loop-4: #5bd49c;
+    --loop-5: #c18cf0;
+    --loop-1-ink: #0f1115;
+    --loop-2-ink: #0f1115;
+    --loop-3-ink: #0f1115;
+    --loop-4-ink: #0f1115;
+    --loop-5-ink: #0f1115;
+    --grid: rgba(232, 235, 240, 0.1);
+    --grid-bar: rgba(232, 235, 240, 0.32);
+    --wash: rgba(232, 235, 240, 0.06);
+    --shadow-bar: 0 -10px 24px -14px rgba(0, 0, 0, 0.7);
+    --scrim: rgba(0, 0, 0, 0.62);
+    --region-alpha: 0.26;
+    --region-alpha-on: 0.4;
+    --cut-fill: rgba(0, 0, 0, 0.62);
+    --cut-line: rgba(232, 235, 240, 0.5);
+    --cut-ink: #e8ebf0;
+    --cut-label-bg: rgba(0, 0, 0, 0.7);
+  }
+}
+
+:root[data-skin='pro'][data-theme='dark'] {
+  color-scheme: dark;
+  --bg: #0f1115;
+  --panel: #171a20;
+  --panel-2: #1e222a;
+  --ink: #e8ebf0;
+  --ink-soft: #9aa3b2;
+  --rule: #262b33;
+  --accent: #7aa2ff;
+  --accent-strong: #7aa2ff;
+  --on-accent: #0f1115;
+  --mustard: #ffc15a;
+  --sticker-ink: #0f1115;
+  --ok: #5bd49c;
+  --warn: #ffc15a;
+  --bad: #ff7b7f;
+  --ok-text: #5bd49c;
+  --warn-text: #ffc15a;
+  --bad-text: #ff7b7f;
+  --loop-1: #7aa2ff;
+  --loop-2: #ff7b7f;
+  --loop-3: #ffc15a;
+  --loop-4: #5bd49c;
+  --loop-5: #c18cf0;
+  --loop-1-ink: #0f1115;
+  --loop-2-ink: #0f1115;
+  --loop-3-ink: #0f1115;
+  --loop-4-ink: #0f1115;
+  --loop-5-ink: #0f1115;
+  --grid: rgba(232, 235, 240, 0.1);
+  --grid-bar: rgba(232, 235, 240, 0.32);
+  --wash: rgba(232, 235, 240, 0.06);
+  --shadow-bar: 0 -10px 24px -14px rgba(0, 0, 0, 0.7);
+  --scrim: rgba(0, 0, 0, 0.62);
+  --region-alpha: 0.26;
+  --region-alpha-on: 0.4;
+  --cut-fill: rgba(0, 0, 0, 0.62);
+  --cut-line: rgba(232, 235, 240, 0.5);
+  --cut-ink: #e8ebf0;
+  --cut-label-bg: rgba(0, 0, 0, 0.7);
+}
+
+:root[data-skin='pro'][data-theme='light'] {
+  color-scheme: light;
+}
+
+/* ---- type and page ---- */
+
+:root[data-skin='pro'] body {
+  font-size: 15px;
+  letter-spacing: 0;
+}
+
+:root[data-skin='pro'] .app {
+  gap: 20px;
+}
+
+:root[data-skin='pro'] header.top h1 {
+  font-weight: 600;
+  font-stretch: 100%;
+  text-transform: none;
+  letter-spacing: -0.03em;
+  font-size: clamp(1.6rem, 6vw, 2.1rem);
+}
+
+:root[data-skin='pro'] header.top p {
+  font-variant-caps: normal;
+  letter-spacing: 0;
+  font-size: 0.95rem;
+}
+
+:root[data-skin='pro'] .looks-label {
+  font-variant-caps: normal;
+  letter-spacing: 0;
+  font-size: 0.85rem;
+}
+
+:root[data-skin='pro'] .look {
+  border-radius: 8px;
+  transition:
+    background-color 120ms ease,
+    border-color 120ms ease;
+}
+
+:root[data-skin='pro'] .look-swatch {
+  border-radius: 5px;
+}
+
+/* ---- cards: hairlines, no shadow, 8 px radius ---- */
+
+:root[data-skin='pro'] .card {
+  border-radius: 8px;
+  box-shadow: none;
+  padding: 20px;
+}
+
+:root[data-skin='pro'] .card > h2,
+:root[data-skin='pro'] .card-head h2 {
+  font-family: var(--font-body);
+  font-stretch: 100%;
+  font-weight: 600;
+  font-size: 1rem;
+  text-transform: none;
+  letter-spacing: -0.005em;
+  color: var(--ink);
+}
+
+:root[data-skin='pro'] .side-tag {
+  display: none;
+}
+
+/* one 120 ms ease on hover and focus, and no other motion */
+:root[data-skin='pro'] .btn,
+:root[data-skin='pro'] input.nf-input,
+:root[data-skin='pro'] .region,
+:root[data-skin='pro'] .cut,
+:root[data-skin='pro'] .suggestion {
+  transition:
+    background-color 120ms ease,
+    border-color 120ms ease,
+    color 120ms ease;
+}
+
+:root[data-skin='pro'] .region:hover,
+:root[data-skin='pro'] .cut:hover,
+:root[data-skin='pro'] .suggestion:hover {
+  transform: none;
+  box-shadow: none;
+}
+
+:root[data-skin='pro'] .region,
+:root[data-skin='pro'] .cut {
+  border-radius: 8px;
+  padding: 16px;
+}
+
+:root[data-skin='pro'] .region {
+  border-top-width: 2px;
+}
+
+:root[data-skin='pro'] .cut {
+  border-left-width: 2px;
+}
+
+:root[data-skin='pro'] .region.selected,
+:root[data-skin='pro'] .cut.selected {
+  border-color: var(--accent-strong);
+  box-shadow: 0 0 0 1px var(--accent-strong);
+}
+
+/* ---- buttons and fields ---- */
+
+:root[data-skin='pro'] .btn {
+  border-width: 1px;
+  border-color: var(--ink-soft);
+  border-radius: 8px;
+  font-weight: 500;
+}
+
+:root[data-skin='pro'] .btn:active:not(:disabled) {
+  background: var(--wash);
+  color: var(--ink);
+}
+
+:root[data-skin='pro'] .btn.primary,
+:root[data-skin='pro'] .btn.export {
+  border-color: var(--accent-strong);
+  font-weight: 600;
+}
+
+:root[data-skin='pro'] .btn.primary:active:not(:disabled),
+:root[data-skin='pro'] .btn.export:active:not(:disabled) {
+  color: var(--on-accent);
+}
+
+:root[data-skin='pro'] .btn.quiet {
+  border-color: transparent;
+  text-decoration: none;
+}
+
+:root[data-skin='pro'] .btn.quiet:hover:not(:disabled) {
+  background: var(--wash);
+}
+
+:root[data-skin='pro'] .btn.active {
+  background: var(--accent-strong);
+  border-color: var(--accent-strong);
+  color: var(--on-accent);
+}
+
+:root[data-skin='pro'] .segmented {
+  border-width: 1px;
+  border-color: var(--ink-soft);
+  border-radius: 8px;
+}
+
+:root[data-skin='pro'] .segmented .btn + .btn {
+  border-left-width: 1px;
+  border-left-color: var(--ink-soft);
+}
+
+:root[data-skin='pro'] .segmented .btn.active:active:not(:disabled) {
+  background: var(--accent-strong);
+  color: var(--on-accent);
+}
+
+:root[data-skin='pro'] input.nf-input {
+  border-width: 1px;
+  border-color: var(--ink-soft);
+  border-radius: 6px;
+  background: var(--paper);
+}
+
+:root[data-skin='pro'] input.nf-input:focus {
+  border-color: var(--accent-strong);
+}
+
+:root[data-skin='pro'] input[type='text'],
+:root[data-skin='pro'] select {
+  border-bottom-width: 1px;
+}
+
+:root[data-skin='pro'] :focus-visible {
+  outline: 2px solid var(--accent-strong);
+  outline-offset: 2px;
+  box-shadow: none;
+}
+
+:root[data-skin='pro'] .look:has(input:focus-visible) {
+  outline-color: var(--accent-strong);
+}
+
+:root[data-skin='pro'] kbd {
+  border-radius: 4px;
+  background: var(--panel-2);
+}
+
+/* ---- the turntable bar: a panel with a hairline, and a solid accent circle to play ---- */
+
+:root[data-skin='pro'] .transport {
+  border-width: 1px;
+  border-color: var(--rule);
+  border-radius: 12px;
+}
+
+:root[data-skin='pro'] .play {
+  gap: 12px;
+}
+
+:root[data-skin='pro'] .record {
+  width: 56px;
+  height: 56px;
+  border-radius: 50%;
+  background: var(--accent-strong);
+  transition: background-color 120ms ease;
+}
+
+:root[data-skin='pro'] .record-disc,
+:root[data-skin='pro'] .record-label,
+:root[data-skin='pro'] .record-sheen {
+  display: none;
+}
+
+:root[data-skin='pro'] .play:hover:not(:disabled) .record {
+  filter: none;
+  background: color-mix(in srgb, var(--accent-strong) 88%, var(--ink));
+}
+
+:root[data-skin='pro'] .play-word {
+  font-family: var(--font-body);
+  font-weight: 600;
+  font-stretch: 100%;
+  font-size: 1rem;
+  text-transform: none;
+  letter-spacing: 0;
+}
+
+:root[data-skin='pro'] .transport .time {
+  font-weight: 500;
+}
+
+:root[data-skin='pro'] .transport-main .btn.export {
+  border-radius: 8px;
+}
+
+/* ---- the loop's label, the stamps, tracks ---- */
+
+:root[data-skin='pro'] .loop-label {
+  border: 0;
+  box-shadow: none;
+}
+
+:root[data-skin='pro'] .loop-label::after {
+  display: none;
+}
+
+:root[data-skin='pro'] .loop-play {
+  border-width: 1px;
+  border-color: var(--ink-soft);
+}
+
+:root[data-skin='pro'] .region-title strong,
+:root[data-skin='pro'] .cut-head strong {
+  font-family: var(--font-body);
+  font-stretch: 100%;
+  font-weight: 600;
+  text-transform: none;
+  letter-spacing: 0;
+  font-size: 1rem;
+}
+
+:root[data-skin='pro'] .cut {
+  border-left-color: var(--ink);
+}
+
+:root[data-skin='pro'] .cut-glyph {
+  border-radius: 6px;
+}
+
+/* the seam stamp becomes a small pill with a coloured dot; its word (CLEAN, OK, ROUGH) stays */
+:root[data-skin='pro'] .chip {
+  transform: none;
+  -webkit-mask-image: none;
+  mask-image: none;
+  box-shadow: none;
+  border-width: 1px;
+  border-radius: 999px;
+  padding: 1px 10px 1px 8px;
+  font-family: var(--font-body);
+  font-weight: 600;
+  font-size: 0.74rem;
+  letter-spacing: 0.04em;
+  background: color-mix(in srgb, currentColor 9%, transparent);
+}
+
+:root[data-skin='pro'] .chip::before {
+  content: '';
+  display: inline-block;
+  width: 7px;
+  height: 7px;
+  margin-right: 6px;
+  border-radius: 50%;
+  background: currentColor;
+  vertical-align: 0.04em;
+}
+
+:root[data-skin='pro'] .suggestion-rank {
+  font-family: var(--font-mono);
+  font-stretch: 100%;
+  font-weight: 500;
+  font-size: 0.95rem;
+}
+
+:root[data-skin='pro'] .suggestion {
+  border-radius: 6px;
+}
+
+:root[data-skin='pro'] .stars {
+  color: var(--accent-strong);
+}
+
+:root[data-skin='pro'] .length-caption {
+  font-variant-caps: normal;
+  letter-spacing: 0;
+  font-size: 0.85rem;
+}
+
+:root[data-skin='pro'] .length-arrow {
+  color: var(--ink-soft);
+}
+
+/* ---- waveform and the extended timeline ---- */
+
+:root[data-skin='pro'] .wave-host {
+  border-radius: 8px;
+  background: var(--panel);
+}
+
+:root[data-skin='pro'] .tl-bar {
+  height: 28px;
+  border-width: 1px;
+  border-color: var(--ink-soft);
+  border-radius: 8px;
+}
+
+:root[data-skin='pro'] .tl-bar::after {
+  display: none;
+}
+
+:root[data-skin='pro'] .tl-ending {
+  border-radius: 8px;
+}
+
+:root[data-skin='pro'] .tl-block {
+  line-height: 28px;
+}
+
+:root[data-skin='pro'] .progress .track {
+  height: 6px;
+  border: 0;
+  box-shadow: none;
+  background: var(--rule);
+}
+
+/* ---- the drop zone: a plain dashed drop area, and a strip once a song is in ---- */
+
+:root[data-skin='pro'] .dropzone {
+  width: min(100%, 560px);
+  margin: 16px auto 0;
+}
+
+:root[data-skin='pro'] .dropzone .sleeve-record,
+:root[data-skin='pro'] .dropzone .sleeve-ring,
+:root[data-skin='pro'] .dropzone .sleeve-side {
+  display: none;
+}
+
+:root[data-skin='pro'] .dropzone .sleeve-face {
+  aspect-ratio: auto;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  padding: 40px 24px;
+  border: 1.5px dashed var(--ink-soft);
+  border-radius: 8px;
+  box-shadow: none;
+}
+
+:root[data-skin='pro'] .dropzone:hover .sleeve-face,
+:root[data-skin='pro'] .dropzone.drag .sleeve-face {
+  transform: none;
+  border-color: var(--accent-strong);
+  box-shadow: 0 0 0 1px var(--accent-strong);
+}
+
+:root[data-skin='pro'] .dropzone .dz-title {
+  font-weight: 600;
+  font-stretch: 100%;
+  text-transform: none;
+  letter-spacing: 0;
+  font-size: 1.15rem;
+}
+
+:root[data-skin='pro'] .dropzone.compact {
+  width: 100%;
+  margin: 0;
+}
+
+:root[data-skin='pro'] .dropzone.compact .sleeve-face {
+  flex-direction: row;
+  justify-content: flex-start;
+  align-items: center;
+  padding: 12px 16px;
+  border: 1px solid var(--rule);
+}
+
+:root[data-skin='pro'] .dropzone.compact .sleeve-record {
+  display: none;
+}
+
+:root[data-skin='pro'] .dropzone.compact .dz-title {
+  font-size: 1rem;
+}
+
+/* ---- the export dialog ---- */
+
+:root[data-skin='pro'] dialog.export-dialog {
+  border-width: 1px;
+  border-color: var(--rule);
+  border-radius: 12px;
+  box-shadow: 0 24px 60px -20px rgba(0, 0, 0, 0.45);
+}
+
+:root[data-skin='pro'] .export-form h2 {
+  font-family: var(--font-body);
+  font-stretch: 100%;
+  text-transform: none;
+  font-weight: 600;
+  letter-spacing: -0.01em;
+}
+
+:root[data-skin='pro'] .export-form fieldset {
+  border-radius: 8px;
+}
+
+:root[data-skin='pro'] .progress .fill {
+  border-radius: 99px;
+}

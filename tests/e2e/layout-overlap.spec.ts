@@ -12,7 +12,10 @@ interface Look {
   modes: readonly ('light' | 'dark')[];
 }
 // the skins arrive with SPEC-v1.3.md section 5; each one is added here as it lands
-const LOOKS: Look[] = [{ skin: 'vinyl', modes: ['light', 'dark'] }];
+const LOOKS: Look[] = [
+  { skin: 'vinyl', modes: ['light', 'dark'] },
+  { skin: 'pro', modes: ['light', 'dark'] },
+];
 
 /** Choose a skin before the page loads (a no-op for the default). */
 async function chooseSkin(page: Page, skin: string): Promise<void> {

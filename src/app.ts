@@ -70,6 +70,9 @@ import { TimelineStrip } from './ui/timelineStrip';
 import { Transport } from './ui/transport';
 import { PITCH_MAX, PITCH_MIN, SPEED_MAX, SPEED_MIN } from './ui/transport';
 import type { PlayMode } from './ui/transport';
+import { SkinPicker } from './ui/skinPicker';
+import { applySkin, loadSkinChoice, saveSkinChoice } from './ui/skins';
+import type { SkinId } from './ui/skins';
 import { SELECTION_ID, WaveformView } from './ui/waveform';
 import { formatChannels, formatRate } from './util/format';
 import { formatClockFloor, formatTime, roundMs } from './util/time';
@@ -199,6 +202,7 @@ export class App {
   private exportDialog: ExportDialog;
   private songPanel: HTMLElement;
   private appEl!: HTMLElement;
+  private skinPicker!: SkinPicker;
   private zoomSlider!: HTMLInputElement;
   private zoomField!: NumberField;
   private waveHost: HTMLElement;
@@ -368,10 +372,17 @@ export class App {
       timeline: this.timelineStrip.el,
     });
 
+    // the look: chosen last time (or Vinyl), switched from the picker in the masthead without touching anything else
+    const skin = loadSkinChoice();
+    applySkin(skin);
+    this.skinPicker = new SkinPicker(skin, (id) => this.setSkin(id));
     this.appEl = h('div', { class: 'app' }, [
       h('header', { class: 'top' }, [
-        h('h1', { text: 'Song Looper' }),
-        h('p', { text: 'Drop in a record. Press an extended cut.' }),
+        h('div', { class: 'masthead' }, [
+          h('h1', { text: 'Song Looper' }),
+          h('p', { text: 'Drop in a record. Press an extended cut.' }),
+        ]),
+        this.skinPicker.el,
       ]),
       this.dropzone.el,
       this.songPanel,
@@ -401,6 +412,17 @@ export class App {
     };
     new ResizeObserver(sync).observe(bar);
     sync();
+  }
+
+  // ---- the look (SPEC-v1.3.md 5) ------------------------------------------------
+
+  /** Switch the look: `data-skin` on <html>, its fonts the first time, remembered for next time. Nothing reloads or stops. */
+  setSkin(id: SkinId): void {
+    applySkin(id);
+    saveSkinChoice(id);
+    this.skinPicker.setCurrent(id);
+    // the waveform re-reads its colours (it also watches data-skin, so this is only to be sure it has done so now)
+    this.waveform?.refreshTheme();
   }
 
   // ---- state -> views ----------------------------------------------------------

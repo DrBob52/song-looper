@@ -1,4 +1,5 @@
 import './style.css';
+import './skins/pro.css';
 import { App } from './app';
 
 const root = document.querySelector<HTMLDivElement>('#app');
