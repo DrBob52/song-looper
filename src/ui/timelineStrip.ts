@@ -18,10 +18,18 @@ export class TimelineStrip {
   private total = 0;
 
   constructor(private onSeek: (extendedSeconds: number) => void) {
-    this.head = h('div', { class: 'tl-head', attrs: { 'aria-hidden': 'true' } });
+    // overlap guard: the playhead is drawn across the strip on purpose
+    this.head = h('div', { class: 'tl-head', attrs: { 'aria-hidden': 'true', 'data-overlap-ok': 'the playhead is drawn across the strip on purpose' } });
     this.bar = h('div', {
       class: 'tl-bar',
-      attrs: { role: 'slider', tabindex: 0, 'aria-label': 'Extended timeline', 'data-testid': 'timeline' },
+      attrs: {
+        role: 'slider',
+        tabindex: 0,
+        'aria-label': 'Extended timeline',
+        'data-testid': 'timeline',
+        // overlap guard: faint grooves (7% black lines) are drawn over the blocks and their repeat numbers on purpose
+        'data-overlap-ok': 'faint grooves are drawn over the blocks and their numbers on purpose',
+      },
       on: {
         click: (e) => {
           const rect = this.bar.getBoundingClientRect();

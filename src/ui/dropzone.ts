@@ -77,15 +77,25 @@ export class Dropzone {
     this.showEmpty();
   }
 
-  /** The sleeve is a face with the song on it and a record sliding out of its edge (drawn in CSS). */
+  /**
+   * The sleeve is a face with the song on it and a record sliding out of its edge (drawn in CSS). The empty sleeve is a
+   * grid of rows, each with its own space: the side label, the ring a record wears into its sleeve, the heading, the
+   * help text. Nothing is positioned over the text.
+   */
   private sleeve(children: HTMLElement[]): void {
     clear(this.zone);
-    this.zone.append(h('span', { class: 'sleeve-record', attrs: { 'aria-hidden': 'true' } }), h('div', { class: 'sleeve-face' }, children));
+    this.zone.append(h('span', {
+        class: 'sleeve-record',
+        // overlap guard: the record is drawn behind the sleeve face (it comes earlier in the paint order) and has no text
+        attrs: { 'aria-hidden': 'true', 'data-overlap-ok': 'drawn behind the sleeve face, which paints over it; it has no text' },
+      }), h('div', { class: 'sleeve-face' }, children));
   }
 
   private showEmpty(): void {
     this.zone.classList.remove('compact');
     this.sleeve([
+      h('div', { class: 'sleeve-side mono', text: 'SIDE A \u00b7 33 1/3 RPM', attrs: { 'aria-hidden': 'true' } }),
+      h('div', { class: 'sleeve-ring', attrs: { 'aria-hidden': 'true' } }),
       h('div', { class: 'dz-title', text: 'Drop a song here or click to choose' }),
       h('div', {
         class: 'dz-sub',

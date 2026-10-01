@@ -161,7 +161,8 @@ body {
 .app {
   max-width: 880px;
   margin: 0 auto;
-  padding: 20px 16px calc(24px + env(safe-area-inset-bottom));
+  /* room for the turntable bar (its height, set from the script while it is shown) so it never covers the last card */
+  padding: 20px 16px calc(24px + var(--bar-h, 0px) + env(safe-area-inset-bottom));
   display: grid;
   grid-template-columns: minmax(0, 1fr);
   gap: 16px;
@@ -586,12 +587,13 @@ input.nf-input:disabled {
 
 .dropzone .sleeve-face {
   position: relative;
-  display: flex;
-  flex-direction: column;
-  justify-content: flex-end;
+  /* four rows, each with its own space: side label, ring, heading, help text. Nothing sits on top of the text. */
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  grid-template-rows: auto minmax(64px, 1fr) auto auto;
   gap: 6px;
   aspect-ratio: 1;
-  padding: 20px 18px 22px;
+  padding: 12px 18px 22px;
   background: var(--sleeve);
   border: 1.5px solid var(--ink);
   border-radius: 6px;
@@ -633,36 +635,27 @@ input.nf-input:disabled {
   cursor: progress;
 }
 
-/* the ring a record wears into its sleeve, and the print on it */
-.dropzone .sleeve-face::before {
-  content: '';
-  position: absolute;
-  left: 50%;
-  top: 33%;
-  width: 54%;
+/* the ring a record wears into its sleeve, and the print on it: real grid rows, not overlays */
+.dropzone .sleeve-side {
+  font: 600 0.68rem/1.4 var(--font-mono);
+  letter-spacing: 0.12em;
+  color: var(--ink-soft);
+  text-align: left;
+  white-space: nowrap;
+}
+
+.dropzone .sleeve-ring {
+  align-self: center;
+  justify-self: center;
+  height: 100%;
+  max-height: 150px;
   aspect-ratio: 1;
-  transform: translate(-50%, -50%);
+  min-width: 0;
   border-radius: 50%;
   box-shadow:
     inset 0 0 0 1px var(--rule),
     inset 0 0 0 7px var(--sleeve),
     inset 0 0 0 8px var(--rule);
-  pointer-events: none;
-}
-
-.dropzone .sleeve-face::after {
-  content: 'SIDE A \00b7 33 1/3 RPM';
-  position: absolute;
-  top: 12px;
-  left: 16px;
-  font: 600 0.68rem var(--font-mono);
-  letter-spacing: 0.12em;
-  color: var(--ink-soft);
-}
-
-.dropzone.compact .sleeve-face::before,
-.dropzone.compact .sleeve-face::after {
-  display: none;
 }
 
 /* once a song is in: the sleeve becomes a strip, the record sliding out of its right end */
@@ -674,6 +667,7 @@ input.nf-input:disabled {
 
 .dropzone.compact .sleeve-face {
   aspect-ratio: auto;
+  display: flex;
   flex-direction: row;
   flex-wrap: wrap;
   align-items: center;
@@ -782,6 +776,19 @@ input.nf-input:disabled {
 }
 
 /* ---- the turntable bar: sticky at the bottom ---- */
+
+/* hidden until a song is decoded; slides in over 200 ms when it appears (no animation under reduced motion, see the
+   end of this file) */
+.transport:not([hidden]) {
+  animation: bar-in 200ms ease-out backwards;
+}
+
+@keyframes bar-in {
+  from {
+    transform: translateY(24px);
+    opacity: 0;
+  }
+}
 
 .transport {
   position: sticky;

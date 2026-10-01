@@ -158,6 +158,7 @@ export class App {
   private lengthPanel: LengthPanel;
   private exportDialog: ExportDialog;
   private songPanel: HTMLElement;
+  private appEl!: HTMLElement;
   private zoomSlider!: HTMLInputElement;
   private zoomField!: NumberField;
   private waveHost: HTMLElement;
@@ -188,6 +189,8 @@ export class App {
       onResetSpeedPitch: () => this.setSpeedPitch(1, 0),
     });
     this.transport.setEnabled(false);
+    // The turntable bar appears once a song is decoded, not before.
+    this.transport.el.hidden = true;
     if (typeof AudioWorkletNode === 'undefined') this.transport.setSpeedPitchAvailable(false);
     if (typeof AudioContext === 'undefined' || typeof OfflineAudioContext === 'undefined') {
       this.dropzone.showError('This browser does not support the Web Audio features Song Looper needs. Try a current Chrome, Edge, Firefox or Safari.');
@@ -302,18 +305,17 @@ export class App {
       ],
     );
 
-    this.root.append(
-      h('div', { class: 'app' }, [
-        h('header', { class: 'top' }, [
-          h('h1', { text: 'Song Looper' }),
-          h('p', { text: 'Drop in a record. Press an extended cut.' }),
-        ]),
-        this.dropzone.el,
-        this.songPanel,
-        this.transport.el,
+    this.appEl = h('div', { class: 'app' }, [
+      h('header', { class: 'top' }, [
+        h('h1', { text: 'Song Looper' }),
+        h('p', { text: 'Drop in a record. Press an extended cut.' }),
       ]),
-      this.exportDialog.el,
-    );
+      this.dropzone.el,
+      this.songPanel,
+      this.transport.el,
+    ]);
+    this.root.append(this.appEl, this.exportDialog.el);
+    this.trackBarHeight();
 
     this.player.subscribe(() => {
       this.transport.setPlaying(this.player.isPlaying() || this.player.isAuxPlaying());
@@ -322,6 +324,20 @@ export class App {
     });
     this.store.subscribe((s, prev) => this.onState(s, prev));
     window.addEventListener('keydown', (e) => this.onKey(e));
+  }
+
+  /**
+   * The page keeps bottom padding equal to the turntable bar's height while the bar is shown (`--bar-h`, 0 while it is
+   * hidden), so the bar never covers the last card when you scroll to the bottom.
+   */
+  private trackBarHeight(): void {
+    if (typeof ResizeObserver === 'undefined') return;
+    const bar = this.transport.el;
+    const sync = (): void => {
+      this.appEl.style.setProperty('--bar-h', `${bar.hidden ? 0 : Math.ceil(bar.getBoundingClientRect().height)}px`);
+    };
+    new ResizeObserver(sync).observe(bar);
+    sync();
   }
 
   // ---- state -> views ----------------------------------------------------------
@@ -585,6 +601,7 @@ export class App {
         : null,
     );
     this.songPanel.hidden = false;
+    this.transport.el.hidden = false;
     this.transport.setEnabled(true);
 
     const peaks = computePeaks(song.buffer, 100);
