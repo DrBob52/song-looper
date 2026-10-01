@@ -14,6 +14,19 @@ export interface WavOptions {
 
 export const WAV_MAX_DATA_BYTES = 0xffffffff - 44;
 
+/** The largest value of a 32-bit size or offset field. */
+export const UINT32_MAX = 4_294_967_295;
+/**
+ * Bytes kept free below the 4 GB limit so that the zip wrapper used inside claude.ai artifacts (a local header, the
+ * file, a central directory and an end record, whose offsets are 32-bit too) still fits.
+ */
+export const WAV_ZIP_MARGIN = 1024;
+
+/** The most frames a WAV file can hold at this bit depth and channel count: floor((2^32 - 1 - 1024 - 44) / frame size). */
+export function maxWavFrames(channels: number, bitDepth: BitDepth): number {
+  return Math.floor((UINT32_MAX - WAV_ZIP_MARGIN - 44) / (channels * bytesPerSample(bitDepth)));
+}
+
 export function bytesPerSample(bitDepth: BitDepth): number {
   return bitDepth / 8;
 }
@@ -71,25 +84,28 @@ function makeRng(seed: number): () => number {
 
 const CHUNK_FRAMES = 1 << 18;
 
-/** Encode channels to a WAV Blob. Built in chunks so a huge file never needs one giant buffer. */
-export function encodeWav(channels: Float32Array[], sampleRate: number, options: WavOptions = {}): Blob {
-  const bitDepth = options.bitDepth ?? 16;
-  const dither = options.dither ?? true;
-  const nCh = channels.length;
-  if (nCh === 0) throw new Error('encodeWav: no channels');
-  const frames = channels[0]!.length;
-  const header = wavHeader(frames, nCh, sampleRate, bitDepth);
-  const parts: BlobPart[] = [header as Uint8Array<ArrayBuffer>];
-  const rng = makeRng(0x9e3779b9);
+/**
+ * Turns pieces of audio into the interleaved bytes of the `data` chunk, one piece at a time. The dither generator
+ * carries over from piece to piece, so the bytes are the same however the song is cut up.
+ */
+export class WavChunkEncoder {
+  private rng = makeRng(0x9e3779b9);
 
-  for (let start = 0; start < frames; start += CHUNK_FRAMES) {
-    const n = Math.min(CHUNK_FRAMES, frames - start);
-    const out = new ArrayBuffer(n * nCh * bytesPerSample(bitDepth));
+  constructor(
+    private channelCount: number,
+    private bitDepth: BitDepth = 16,
+    private dither = true,
+  ) {}
+
+  /** Encode frames [from, from + n) of the channels. */
+  encode(channels: readonly Float32Array[], from = 0, frames = channels[0]!.length - from): ArrayBuffer {
+    const { bitDepth, dither, rng, channelCount: nCh } = this;
+    const out = new ArrayBuffer(frames * nCh * bytesPerSample(bitDepth));
     const dv = new DataView(out);
     let o = 0;
-    for (let i = 0; i < n; i++) {
+    for (let i = 0; i < frames; i++) {
       for (let c = 0; c < nCh; c++) {
-        const x = channels[c]![start + i]!;
+        const x = channels[c]![from + i]!;
         if (bitDepth === 16) {
           let s = x * 32767;
           if (dither) s += rng() - rng();
@@ -109,7 +125,22 @@ export function encodeWav(channels: Float32Array[], sampleRate: number, options:
         }
       }
     }
-    parts.push(out);
+    return out;
+  }
+}
+
+/** Encode channels to a WAV Blob. Built in chunks so a huge file never needs one giant buffer. */
+export function encodeWav(channels: Float32Array[], sampleRate: number, options: WavOptions = {}): Blob {
+  const bitDepth = options.bitDepth ?? 16;
+  const nCh = channels.length;
+  if (nCh === 0) throw new Error('encodeWav: no channels');
+  const frames = channels[0]!.length;
+  const header = wavHeader(frames, nCh, sampleRate, bitDepth);
+  const parts: BlobPart[] = [header as Uint8Array<ArrayBuffer>];
+  const encoder = new WavChunkEncoder(nCh, bitDepth, options.dither ?? true);
+  for (let start = 0; start < frames; start += CHUNK_FRAMES) {
+    const n = Math.min(CHUNK_FRAMES, frames - start);
+    parts.push(encoder.encode(channels, start, n));
     options.onProgress?.((start + n) / frames);
   }
   return new Blob(parts, { type: 'audio/wav' });

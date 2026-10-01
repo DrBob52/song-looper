@@ -90,8 +90,7 @@ export interface Plan {
   regions: LoopRegion[];
 }
 
-export const MAX_REPEATS = 64;
-export const MAX_EXTENDED_SECONDS = 60 * 60;
+export const MAX_REPEATS = 9999;
 
 export const REGION_COLORS = [
   '#2563eb',

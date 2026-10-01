@@ -1,5 +1,15 @@
 import { describe, expect, it } from 'vitest';
-import { encodeWav, encodeWavBytes, estimateWavSize, wavHeader } from '../../src/audio/wav';
+import {
+  UINT32_MAX,
+  WAV_ZIP_MARGIN,
+  WavChunkEncoder,
+  bytesPerSample,
+  encodeWav,
+  encodeWavBytes,
+  estimateWavSize,
+  maxWavFrames,
+  wavHeader,
+} from '../../src/audio/wav';
 
 const str = (b: Uint8Array, o: number, n: number): string => String.fromCharCode(...b.subarray(o, o + n));
 
@@ -111,5 +121,62 @@ describe('encodeWav', () => {
     expect(blob.type).toBe('audio/wav');
     expect(blob.size).toBe(44 + 64 * 2);
     expect(steps[steps.length - 1]).toBe(1);
+  });
+});
+
+describe('the WAV size cap (SPEC-v1.2.md 2.1)', () => {
+  it('maxWavFrames = floor((4 294 967 295 - 1024 - 44) / (channels x bytes per sample))', () => {
+    expect(UINT32_MAX).toBe(4_294_967_295);
+    expect(WAV_ZIP_MARGIN).toBe(1024);
+    const room = 4_294_967_295 - 1024 - 44;
+    expect(maxWavFrames(2, 16)).toBe(Math.floor(room / 4));
+    expect(maxWavFrames(1, 16)).toBe(Math.floor(room / 2));
+    expect(maxWavFrames(2, 24)).toBe(Math.floor(room / 6));
+    expect(maxWavFrames(1, 24)).toBe(Math.floor(room / 3));
+    expect(maxWavFrames(2, 32)).toBe(Math.floor(room / 8));
+    expect(maxWavFrames(1, 32)).toBe(Math.floor(room / 4));
+    expect(maxWavFrames(6, 24)).toBe(Math.floor(room / 18));
+  });
+
+  it('is about 6:45:47 at 16-bit stereo 44.1 kHz, and shorter for deeper files', () => {
+    const seconds = (ch: number, bits: 16 | 24 | 32, rate: number): number => maxWavFrames(ch, bits) / rate;
+    expect(Math.floor(seconds(2, 16, 44100))).toBe(6 * 3600 + 45 * 60 + 47);
+    expect(seconds(2, 24, 44100)).toBeCloseTo((seconds(2, 16, 44100) * 2) / 3, 3);
+    expect(seconds(2, 32, 44100)).toBeCloseTo(seconds(2, 16, 44100) / 2, 3);
+    expect(seconds(1, 16, 48000)).toBeGreaterThan(seconds(2, 16, 44100));
+  });
+
+  it('a file of the cap fits the WAV header and the zip wrapper, and one frame more would not', () => {
+    for (const [ch, bits] of [[2, 16], [1, 16], [2, 24], [1, 24], [2, 32], [1, 32]] as const) {
+      const max = maxWavFrames(ch, bits);
+      const bytes = max * ch * bytesPerSample(bits);
+      expect(44 + bytes).toBeLessThanOrEqual(UINT32_MAX - WAV_ZIP_MARGIN);
+      expect(() => wavHeader(max, ch, 44100, bits)).not.toThrow();
+      const h = wavHeader(max, ch, 44100, bits);
+      expect(new DataView(h.buffer).getUint32(40, true)).toBe(bytes);
+      expect(new DataView(h.buffer).getUint32(4, true)).toBe(36 + bytes);
+      // and one more frame would pass what the margin leaves
+      expect((max + 1) * ch * bytesPerSample(bits)).toBeGreaterThan(UINT32_MAX - WAV_ZIP_MARGIN - 44);
+    }
+  });
+});
+
+describe('WavChunkEncoder', () => {
+  it('encodes in pieces to the same bytes as the whole song, dither included', async () => {
+    const n = 5000;
+    const l = Float32Array.from({ length: n }, (_, i) => Math.sin(i * 0.07) * 0.8);
+    const r = Float32Array.from({ length: n }, (_, i) => Math.cos(i * 0.031) * 0.6);
+    for (const bits of [16, 24, 32] as const) {
+      const whole = await encodeWavBytes([l, r], 8000, { bitDepth: bits });
+      const enc = new WavChunkEncoder(2, bits, true);
+      const pieces: Uint8Array[] = [wavHeader(n, 2, 8000, bits)];
+      for (let pos = 0; pos < n; ) {
+        const len = Math.min(n - pos, [1, 7, 999, 1024, 3][pos % 5]!);
+        pieces.push(new Uint8Array(enc.encode([l.subarray(pos, pos + len), r.subarray(pos, pos + len)])));
+        pos += len;
+      }
+      const joined = new Uint8Array(await new Blob(pieces as Uint8Array<ArrayBuffer>[]).arrayBuffer());
+      expect(Array.from(joined)).toEqual(Array.from(whole));
+    }
   });
 });

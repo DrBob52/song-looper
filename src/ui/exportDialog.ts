@@ -3,6 +3,9 @@ import type { BitDepth } from '../audio/wav';
 import { formatTime } from '../util/time';
 import { clear, h } from './dom';
 
+/** The thrown error that means the user cancelled the export (not a failure). */
+export const EXPORT_CANCELLED = 'ExportCancelledError';
+
 export interface ExportOptions {
   filename: string;
   bitDepth: BitDepth;
@@ -11,8 +14,12 @@ export interface ExportOptions {
 
 export interface ExportInfo {
   defaultName: string;
+  /** The bit depth to start with (the one chosen last). */
+  bitDepth: BitDepth;
   /** Size and duration of the file for the given settings. */
   estimate(bitDepth: BitDepth, applySpeedPitch: boolean): { bytes: number; seconds: number };
+  /** Why a file with these settings cannot be written (it would not fit in a WAV), or null. */
+  problem(bitDepth: BitDepth, applySpeedPitch: boolean): string | null;
   speedPitchNeutral: boolean;
   /** e.g. "1.10x speed, +2 semitones" */
   speedPitchLabel: string;
@@ -46,7 +53,10 @@ export class ExportDialog {
   private depthInputs: HTMLInputElement[] = [];
   private estimateEl: HTMLElement;
   private warnEl: HTMLElement;
+  private problemEl: HTMLElement;
+  private statusEl: HTMLElement;
   private errorEl: HTMLElement;
+  private depthLabels: HTMLElement[] = [];
   private progress: HTMLElement;
   private fill: HTMLElement;
   private progressLabel: HTMLElement;
@@ -55,7 +65,15 @@ export class ExportDialog {
   private busy = false;
 
   constructor(
-    private cb: { onExport(opts: ExportOptions): void | Promise<void>; onCancel(): void },
+    private cb: {
+      onExport(opts: ExportOptions): void | Promise<void>;
+      /** The dialog was closed without exporting. */
+      onCancel(): void;
+      /** Stop the export that is running. */
+      onCancelExport(): void;
+      /** The user picked another bit depth. */
+      onDepth(depth: BitDepth): void;
+    },
   ) {
     this.nameInput = h('input', { attrs: { type: 'text', 'aria-label': 'File name', 'data-testid': 'export-name' }, class: 'grow' });
     this.bake = h('input', {
@@ -72,14 +90,23 @@ export class ExportDialog {
     for (const [depth, label] of depths) {
       const input = h('input', {
         attrs: { type: 'radio', name: 'bitdepth', value: depth, 'data-testid': `depth-${depth}` },
-        on: { change: () => this.refresh() },
+        on: {
+          change: () => {
+            this.cb.onDepth(this.selectedDepth());
+            this.refresh();
+          },
+        },
       });
       input.checked = depth === 16;
       this.depthInputs.push(input);
-      depthRow.append(h('label', { class: 'field' }, [input, h('span', { text: label })]));
+      const note = h('span', { class: 'depth-note small', attrs: { hidden: true } });
+      this.depthLabels.push(note);
+      depthRow.append(h('label', { class: 'field' }, [input, h('span', { text: label }), note]));
     }
     this.estimateEl = h('div', { class: 'mono small', attrs: { 'data-testid': 'export-estimate' } });
     this.warnEl = h('div', { class: 'banner warn', attrs: { hidden: true, 'data-testid': 'export-warning' } });
+    this.problemEl = h('div', { class: 'banner error', attrs: { hidden: true, role: 'alert', 'data-testid': 'export-problem' } });
+    this.statusEl = h('div', { class: 'banner', attrs: { hidden: true, role: 'status', 'data-testid': 'export-status' } });
     this.errorEl = h('div', { class: 'banner error', attrs: { hidden: true, role: 'alert', 'data-testid': 'export-error' } });
     this.fill = h('div', { class: 'fill' });
     this.progressLabel = h('div', { class: 'label' });
@@ -96,7 +123,13 @@ export class ExportDialog {
       class: 'btn',
       text: 'Cancel',
       attrs: { type: 'button', 'data-testid': 'export-cancel' },
-      on: { click: () => this.requestClose() },
+      on: {
+        click: () => {
+          // while exporting, Cancel stops the export; otherwise it closes the dialog
+          if (this.busy) this.cb.onCancelExport();
+          else this.requestClose();
+        },
+      },
     });
     const form = h(
       'form',
@@ -119,6 +152,8 @@ export class ExportDialog {
         ]),
         this.estimateEl,
         this.warnEl,
+        this.problemEl,
+        this.statusEl,
         this.errorEl,
         this.progress,
         h('div', { class: 'row actions' }, [h('span', { class: 'grow' }), this.cancelBtn, this.exportBtn]),
@@ -140,8 +175,10 @@ export class ExportDialog {
       ? 'Speed and pitch are at their neutral settings, so there is nothing to apply.'
       : `Off: the file is the original sound. On: render ${info.speedPitchLabel} into the file.`;
     this.errorEl.hidden = true;
+    this.statusEl.hidden = true;
     this.progress.hidden = true;
     this.setBusy(false);
+    this.depthInputs.forEach((i) => (i.checked = Number(i.value) === info.bitDepth));
     this.refresh();
     if (!this.el.open) this.el.showModal();
     this.nameInput.focus();
@@ -157,10 +194,21 @@ export class ExportDialog {
     if (!this.info) return;
     const est = this.info.estimate(this.selectedDepth(), this.bake.checked && !this.bake.disabled);
     this.estimateEl.textContent = `About ${formatBytes(est.bytes)} · ${formatTime(est.seconds)} · ${this.info.format}`;
-    const big = est.bytes > RENDER_CONFIG.largeFileBytes;
+    const bake = this.bake.checked && !this.bake.disabled;
+    const problem = this.info.problem(this.selectedDepth(), bake);
+    this.problemEl.hidden = !problem;
+    this.problemEl.textContent = problem ?? '';
+    this.exportBtn.disabled = this.busy || problem !== null;
+    // say which depths the song is too long for, so the choice is clear before it is made
+    this.depthInputs.forEach((input, i) => {
+      const tooLong = this.info!.problem(Number(input.value) as BitDepth, bake) !== null;
+      this.depthLabels[i]!.hidden = !tooLong;
+      this.depthLabels[i]!.textContent = tooLong ? '(too long)' : '';
+    });
+    const big = !problem && est.bytes > RENDER_CONFIG.largeFileBytes;
     this.warnEl.hidden = !big;
     if (big) {
-      this.warnEl.textContent = `This file will be large (${formatBytes(est.bytes)}). Rendering may be slow and use a lot of memory. 16-bit or a shorter length makes it smaller.`;
+      this.warnEl.textContent = `This file will be large (${formatBytes(est.bytes)}). It is rendered and written piece by piece, so it needs little memory, but it takes a while. 16-bit or a shorter length makes it smaller.`;
     }
   }
 
@@ -178,6 +226,12 @@ export class ExportDialog {
       await this.cb.onExport(options);
       this.el.close();
     } catch (err) {
+      if (err instanceof Error && err.name === EXPORT_CANCELLED) {
+        this.setBusy(false);
+        this.statusEl.hidden = false;
+        this.statusEl.textContent = 'Export cancelled. Nothing was saved.';
+        return;
+      }
       this.showError(err instanceof Error ? err.message : String(err));
       this.setBusy(false);
     }
@@ -191,8 +245,10 @@ export class ExportDialog {
 
   setBusy(busy: boolean): void {
     this.busy = busy;
-    this.exportBtn.disabled = busy;
-    this.cancelBtn.disabled = busy;
+    this.exportBtn.disabled = busy || (this.info?.problem(this.selectedDepth(), this.bake.checked && !this.bake.disabled) ?? null) !== null;
+    // while it runs, Cancel stops the export
+    this.cancelBtn.textContent = busy ? 'Cancel export' : 'Cancel';
+    this.cancelBtn.title = busy ? 'Stop exporting and throw away what was written' : '';
     this.nameInput.disabled = busy;
     this.depthInputs.forEach((i) => (i.disabled = busy));
     if (this.info) this.bake.disabled = busy || this.info.speedPitchNeutral;

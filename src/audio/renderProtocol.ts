@@ -18,12 +18,17 @@ export type WorkerRequest =
       crossfadeMs: number;
       bitDepth: BitDepth;
       stretch: StretchParams | null;
-    };
-
-export type ExportStage = 'render' | 'stretch' | 'encode';
+      /** Seconds rendered per piece (tests use small ones); default RENDER_CONFIG.exportChunkSeconds. */
+      chunkSeconds?: number;
+    }
+  /** The main thread has taken `bytes` of exported data (flow control: the worker never runs far ahead). */
+  | { type: 'ack'; id: number; bytes: number };
 
 export type WorkerResponse =
   | { type: 'rendered'; id: number; channels: Float32Array[]; sampleRate: number }
-  | { type: 'progress'; id: number; stage: ExportStage; pct: number }
-  | { type: 'exported'; id: number; blob: Blob }
+  /** The WAV header, then the pieces of the data, then `exported`. */
+  | { type: 'header'; id: number; bytes: ArrayBuffer }
+  | { type: 'data'; id: number; bytes: ArrayBuffer }
+  | { type: 'progress'; id: number; fraction: number; done: number; total: number }
+  | { type: 'exported'; id: number; frames: number; bytes: number }
   | { type: 'error'; id: number; message: string };

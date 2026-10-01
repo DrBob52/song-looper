@@ -14,18 +14,22 @@ import {
   extendedToOriginal,
   originalToExtended,
   planKey,
+  regionsToSamples,
+  renderedLength,
 } from './audio/render';
-import { RenderClient, SupersededError } from './audio/renderClient';
+import { exportFrames, wavTooLong } from './audio/exportPieces';
+import { ExportCancelledError, RenderClient, SupersededError } from './audio/renderClient';
 import { noopLabelProvider } from './label/provider';
 import type { LabelProvider } from './label/provider';
-import { isNeutral, stretchedLength } from './audio/stretch';
+import { isNeutral } from './audio/stretch';
 import { solveRepeats } from './audio/target';
-import { estimateWavSize } from './audio/wav';
+import { estimateWavSize, maxWavFrames } from './audio/wav';
+import type { BitDepth } from './audio/wav';
 import { saveWav, warmUpSave } from './audio/save';
 import { barsBetween, emptyGrid, makeGrid, snapTime } from './grid';
 import type { Grid } from './grid';
 import type { LoopRegion, Plan, SeamPlan, Span } from './model';
-import { MAX_EXTENDED_SECONDS } from './model';
+import { MAX_REPEATS } from './model';
 import { MIN_REGION_SECONDS, fitSpan, isSmooth, neighbourBounds, newRegionId, nextColor, sortRegions, undoSmoothing, withSeamPlan } from './plan';
 import { AnalysisControls } from './ui/analysisControls';
 import { Dropzone } from './ui/dropzone';
@@ -43,7 +47,7 @@ import { PITCH_MAX, PITCH_MIN, SPEED_MAX, SPEED_MIN } from './ui/transport';
 import type { PlayMode } from './ui/transport';
 import { SELECTION_ID, WaveformView } from './ui/waveform';
 import { formatChannels, formatRate } from './util/format';
-import { formatClock, formatTime, roundMs } from './util/time';
+import { formatClock, formatClockFloor, formatTime, roundMs } from './util/time';
 import { createStore } from './util/store';
 
 /** The waveform zoom range in pixels per second (0 fits the whole song). */
@@ -76,6 +80,8 @@ export interface AppState {
   targetSeconds: number;
   /** Seam reports of the loops (harmony, scores, chip) by region id, as the analysis worker last delivered them. */
   seams: Record<string, SeamReport>;
+  /** The bit depth chosen last in the export dialog: the length panel says whether the extended song fits at it. */
+  bitDepth: BitDepth;
 }
 
 /** Identifies the points a seam report belongs to (the report is ignored once the loop has moved). */
@@ -134,6 +140,7 @@ export class App {
     lengthMode: 'repeats',
     targetSeconds: 0,
     seams: {},
+    bitDepth: 16,
   });
   readonly player = new Player();
   private renderClient = new RenderClient();
@@ -223,7 +230,12 @@ export class App {
       onSeamMs: (ms) => this.store.set({ seamMs: ms }),
     });
     this.timelineStrip = new TimelineStrip((t) => void this.seekExtended(t));
-    this.exportDialog = new ExportDialog({ onExport: (o) => this.doExport(o), onCancel: () => undefined });
+    this.exportDialog = new ExportDialog({
+      onExport: (o) => this.doExport(o),
+      onCancel: () => undefined,
+      onCancelExport: () => this.renderClient.cancelExport(),
+      onDepth: (bitDepth) => this.store.set({ bitDepth }),
+    });
     warmUpSave();
     this.waveHost = h('div', { class: 'wave-host', attrs: { 'data-testid': 'waveform' } });
     this.noticeEl = h('div', { class: 'notice', attrs: { role: 'status', 'data-testid': 'notice' } });
@@ -395,17 +407,35 @@ export class App {
       this.updateLength();
       this.timelineStrip.update(this.timeline, s.regions);
       this.onPlanChanged(regionsChanged || s.seamMs !== prev.seamMs);
+    } else if (s.bitDepth !== prev.bitDepth) {
+      this.updateLength();
     }
   }
 
+  /** The most seconds of extended song a WAV can hold for this song's channels and sample rate at a bit depth. */
+  private wavCapSeconds(depth: BitDepth): number {
+    const { song } = this.store.get();
+    return song ? maxWavFrames(song.channels, depth) / song.sampleRate : Infinity;
+  }
+
+  /** Why the extended song cannot be written as a WAV at this depth (a message), or null. */
+  private tooLongFor(depth: BitDepth, frames: number): string | null {
+    const { song } = this.store.get();
+    return song ? wavTooLong(frames, song.sampleRate, song.channels, depth) : null;
+  }
+
   private updateLength(): void {
-    const { song, lengthMode, targetSeconds, seamMs, regions } = this.store.get();
+    const { song, lengthMode, targetSeconds, seamMs, regions, bitDepth } = this.store.get();
     if (!song) return;
     const ext = extendedDuration(this.plan(), song.duration);
     let note = '';
     let noteKind: 'info' | 'warn' = 'info';
-    if (ext > MAX_EXTENDED_SECONDS) {
-      note = `Too long: the limit is ${MAX_EXTENDED_SECONDS / 60} minutes. Lower a repeat count.`;
+    // a song too long for a WAV at any depth cannot be exported; one that only fits at 16-bit says so when 24 or 32 is chosen
+    const frames = this.plannedFrames();
+    const noExport = this.tooLongFor(16, frames);
+    const tooLong = noExport ?? this.tooLongFor(bitDepth, frames);
+    if (tooLong) {
+      note = tooLong;
       noteKind = 'warn';
     } else if (lengthMode === 'target') {
       if (regions.length === 0) {
@@ -418,11 +448,12 @@ export class App {
           Math.abs(diff) < 0.05
             ? `Hits the target: ${formatTime(ext, 1)}.`
             : `Closest whole repeats: ${formatTime(ext, 1)} (${diff > 0 ? '+' : '\u2212'}${Math.abs(diff).toFixed(1)} s from the target).`;
-        if (regions.every((r) => r.repeats >= 64) && diff < -0.05) noteKind = 'warn';
+        if (regions.every((r) => r.repeats >= MAX_REPEATS) && diff < -0.05) noteKind = 'warn';
       }
     } else if (ext > 20 * 60) {
-      note = 'That is a long file. Rendering may be slow.';
+      note = 'That is a long file. Export renders it in pieces, so it needs little memory, but it takes a while.';
     }
+    this.transport.setExportBlocked(noExport);
     this.lengthPanel.update({
       mode: lengthMode,
       targetSeconds,
@@ -432,8 +463,8 @@ export class App {
       note,
       noteKind,
       hasRegions: regions.length > 0,
-      capSeconds: Infinity,
-      capMessage: '',
+      capSeconds: this.wavCapSeconds(16),
+      capMessage: `Too long for a WAV at 16-bit (max ${formatClockFloor(this.wavCapSeconds(16))}). Enter a shorter length.`,
     });
   }
 
@@ -797,17 +828,39 @@ export class App {
     return grid.steady ? Math.min(4 * grid.barSeconds, duration / 2) : Math.min(8, duration / 2);
   }
 
+  /**
+   * Frames in the extended song as it will be rendered: the timeline's length, adjusted for the few samples by which
+   * the edges of each loop snap to zero crossings (which add up over thousands of repeats).
+   */
+  private plannedFrames(regions: readonly LoopRegion[] = this.store.get().regions): number {
+    const { song } = this.store.get();
+    if (!song) return 0;
+    return renderedLength(regionsToSamples(song.buffer, { regions: [...regions] }), song.buffer.length);
+  }
+
   /** Set the regions, computing repeat counts from the target length when in target mode. */
   private commitRegions(regions: LoopRegion[], extra: Partial<AppState> = {}): void {
     const { song, lengthMode, targetSeconds } = this.store.get();
     let next = sortRegions(regions);
     if (song && lengthMode === 'target' && next.length > 0) {
+      // never longer than a WAV can hold (at 16-bit, the deepest it can go)
+      const cap = maxWavFrames(song.channels, 16);
       const res = solveRepeats(
         next.map((r) => ({ start: r.start, end: r.end, score: r.score, extra: cycleSeconds(loopPath(r)) - (r.end - r.start) })),
         song.duration,
         targetSeconds,
+        cap / song.sampleRate,
       );
       next = next.map((r, i) => (r.repeats === res.repeats[i] ? r : { ...r, repeats: res.repeats[i]! }));
+      // the few samples lost to zero-crossing snaps can add up to a second or two over thousands of repeats
+      for (let guard = 0; guard < 50 && this.plannedFrames(next) > cap; guard++) {
+        let pick = -1;
+        next.forEach((r, i) => {
+          if (r.repeats > 1 && (pick < 0 || r.end - r.start > next[pick]!.end - next[pick]!.start)) pick = i;
+        });
+        if (pick < 0) break;
+        next = next.map((r, i) => (i === pick ? { ...r, repeats: r.repeats - 1 } : r));
+      }
     }
     this.store.set({ regions: next, ...extra });
   }
@@ -1154,9 +1207,9 @@ export class App {
     const plan = this.plan();
     const key = planKey(plan, song.duration, seamMs);
     if (this.extendedKey === key) return true;
-    if (extendedDuration(plan, song.duration) > MAX_EXTENDED_SECONDS) {
+    if (extendedDuration(plan, song.duration) * song.sampleRate > RENDER_CONFIG.maxInMemoryFrames / 2) {
       this.store.set({ renderState: 'error' });
-      this.notify(`The extended song is longer than ${MAX_EXTENDED_SECONDS / 60} minutes. Lower a repeat count.`);
+      this.notify('The extended song is too long to preview here. Lower a repeat count to hear it; export has no such limit.');
       return false;
     }
     this.store.set({ renderState: 'rendering' });
@@ -1278,11 +1331,12 @@ export class App {
   // ---- export ------------------------------------------------------------------
 
   private openExport(): void {
-    const { song, speed, pitch } = this.store.get();
+    const { song, speed, pitch, bitDepth } = this.store.get();
     if (!song) return;
-    const ext = extendedDuration(this.plan(), song.duration);
-    if (ext > MAX_EXTENDED_SECONDS) {
-      this.notify(`The extended song is longer than ${MAX_EXTENDED_SECONDS / 60} minutes. Lower a repeat count before exporting.`);
+    const exactFrames = this.plannedFrames();
+    const blocked = this.tooLongFor(16, exactFrames);
+    if (blocked) {
+      this.notify(blocked);
       return;
     }
     const neutral = isNeutral({ tempo: speed, pitchSemitones: pitch });
@@ -1290,34 +1344,48 @@ export class App {
     if (Math.abs(speed - 1) > 1e-6) parts.push(`${speed.toFixed(2)}x speed`);
     if (pitch !== 0) parts.push(`${pitch > 0 ? '+' : ''}${pitch} semitone${Math.abs(pitch) === 1 ? '' : 's'}`);
     const base = song.name.replace(/\.[^./\\]+$/, '');
+    const framesOf = (bake: boolean): number => (bake ? exportFrames(exactFrames, { tempo: speed, pitchSemitones: pitch }) : exactFrames);
     this.exportDialog.open({
       defaultName: `${base} (extended).wav`,
+      bitDepth,
       speedPitchNeutral: neutral,
       speedPitchLabel: parts.join(', '),
       format: `${formatRate(song.sampleRate)} ${formatChannels(song.channels)}`,
       estimate: (depth, bake) => {
-        const frames = bake ? stretchedLength(Math.round(ext * song.sampleRate), speed) : Math.round(ext * song.sampleRate);
+        const frames = framesOf(bake);
         return { bytes: estimateWavSize(frames, song.channels, depth), seconds: frames / song.sampleRate };
       },
+      problem: (depth, bake) => wavTooLong(framesOf(bake), song.sampleRate, song.channels, depth),
     });
   }
 
-  private async doExport(opts: { filename: string; bitDepth: 16 | 24 | 32; applySpeedPitch: boolean }): Promise<void> {
-    this.exportDialog.setProgress('Rendering…', 0);
+  private async doExport(opts: { filename: string; bitDepth: BitDepth; applySpeedPitch: boolean }): Promise<void> {
+    const label = opts.applySpeedPitch ? 'Rendering, applying speed and pitch, and writing the WAV' : 'Rendering and writing the WAV';
+    this.exportDialog.setProgress(`${label}\u2026`, 0);
     // what the export plays is what the preview played: every loop's seam plan is in first
     await this.seamsSettled();
     const { seamMs, speed, pitch } = this.store.get();
     const stretch = opts.applySpeedPitch ? { tempo: speed, pitchSemitones: pitch } : null;
-    const blob = await this.renderClient.export(
-      this.plan(),
-      { crossfadeMs: seamMs, bitDepth: opts.bitDepth, stretch },
-      (stage, pct) => {
-        const label = stage === 'render' ? 'Rendering…' : stage === 'stretch' ? 'Applying speed and pitch…' : 'Encoding WAV…';
-        this.exportDialog.setProgress(label, pct);
-      },
-    );
-    this.exportDialog.setProgress('Saving…', 1);
-    await saveWav(blob, opts.filename);
+    const started = performance.now();
+    try {
+      const { blob } = await this.renderClient.export(
+        this.plan(),
+        { crossfadeMs: seamMs, bitDepth: opts.bitDepth, stretch },
+        ({ fraction }) => {
+          const elapsed = (performance.now() - started) / 1000;
+          const left = fraction > 0.02 ? (elapsed * (1 - fraction)) / fraction : null;
+          this.exportDialog.setProgress(
+            `${label}\u2026 ${Math.floor(fraction * 100)}% \u00b7 ${formatTime(elapsed)} elapsed${left !== null ? ` \u00b7 about ${formatTime(left)} left` : ''}`,
+            fraction,
+          );
+        },
+      );
+      this.exportDialog.setProgress('Saving\u2026', 1);
+      await saveWav(blob, opts.filename);
+    } catch (err) {
+      if (err instanceof ExportCancelledError) this.exportDialog.setProgress('Export cancelled.', null);
+      throw err;
+    }
   }
 
   // ---- ticker ------------------------------------------------------------------

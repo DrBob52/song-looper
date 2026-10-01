@@ -12,8 +12,13 @@ export const RENDER_CONFIG = {
   crossfadeMaxMs: 80,
   /** Loop edges snap to the nearest zero crossing within this many milliseconds. */
   zeroCrossRadiusMs: 2,
-  /** Refuse to render an extended song longer than this. */
-  maxExtendedSeconds: 60 * 60,
+  /**
+   * The most frames (per channel) that `renderExtended` will build in one piece. Longer songs are rendered a piece
+   * at a time (`RangeRenderer`), so this limits only the all-in-memory path used by tests and short plans.
+   */
+  maxInMemoryFrames: 1 << 27,
+  /** The export renders and writes the extended song in pieces of this many seconds. */
+  exportChunkSeconds: 10,
   /** Seam audition plays this many seconds before the seam and after it. */
   seamAuditionSeconds: 4,
   /** Warn before exporting a file larger than this many bytes. */

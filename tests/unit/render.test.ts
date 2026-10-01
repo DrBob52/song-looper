@@ -73,10 +73,10 @@ describe('buildTimeline', () => {
   });
 
   it('trims overlaps, clips to the song and clamps repeats', () => {
-    const r = normalizeRegions([region('a', 1, 5, 2), region('b', 4, 7, 100), region('c', 9, 20, 0)], 10);
+    const r = normalizeRegions([region('a', 1, 5, 2), region('b', 4, 7, 20_000), region('c', 9, 20, 0)], 10);
     expect(r.map((x) => [x.id, x.start, x.end, x.repeats])).toEqual([
       ['a', 1, 5, 2],
-      ['b', 5, 7, 64],
+      ['b', 5, 7, 9999],
       ['c', 9, 10, 1],
     ]);
   });
@@ -224,11 +224,13 @@ describe('renderExtended', () => {
     expect(tri[0]!.length).toBe(tri[2]!.length);
   });
 
-  it('refuses an output longer than 60 minutes', () => {
+  it('has no 60-minute cap any more: it refuses only what cannot be held in memory, and points at renderRange', () => {
     const buf = makeBuffer([new Float32Array(1000)], 1000); // 1 s at 1 kHz
     expect(() => renderExtended(buf, { regions: [region('a', 0, 1, 64)] }, { crossfadeMs: 0 })).not.toThrow();
     const longish = makeBuffer([new Float32Array(200 * 1000)], 1000); // 200 s
-    expect(() => renderExtended(longish, { regions: [region('a', 0, 200, 64)] })).toThrow(/60 minutes/);
+    // 200 s x 64 = 3.5 hours: refused before, fine now
+    expect(() => renderExtended(longish, { regions: [region('a', 0, 200, 64)] })).not.toThrow();
+    expect(() => renderExtended(longish, { regions: [region('a', 0, 200, 9999)] })).toThrow(/renderRange/);
   });
 });
 
