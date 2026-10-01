@@ -6,6 +6,7 @@ import { isSmooth } from '../plan';
 import { formatClock, formatTime, parseClock, roundMs } from '../util/time';
 import { h } from './dom';
 import { holdRepeat } from './holdRepeat';
+import { loopCss } from './loopColors';
 import { NumberField, parsePlainNumber } from './numberField';
 import { chipLabel, chipTitle, seamSummary } from './seamText';
 
@@ -146,7 +147,7 @@ export class RegionsPanel {
       if (current !== row.el) this.list.insertBefore(row.el, current ?? null);
 
       row.el.classList.toggle('selected', region.id === selectedId);
-      row.swatch.style.background = region.color;
+      row.swatch.style.background = loopCss(region.color);
       row.title.textContent = `Loop ${index + 1}`;
       row.start.setValue(roundMs(region.start));
       row.end.setValue(roundMs(region.end));

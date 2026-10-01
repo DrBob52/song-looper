@@ -2,6 +2,7 @@ import type { Segment } from '../audio/render';
 import type { LoopRegion } from '../model';
 import { formatTime } from '../util/time';
 import { h } from './dom';
+import { loopCss } from './loopColors';
 
 /** Above this many segments the strip draws one block per loop instead of one per play. */
 const MAX_BLOCKS = 400;
@@ -67,12 +68,12 @@ export class TimelineStrip {
         // a bridge: song audio that follows the loop on a repeat, shown hatched in the loop's colour
         const info = byId.get(seg.regionId);
         block.classList.add('bridge');
-        block.style.setProperty('--loop-color', info?.region.color ?? 'var(--accent)');
+        block.style.setProperty('--loop-color', info ? loopCss(info.region.color) : 'var(--label-red)');
         block.title = `Loop ${(info?.index ?? 0) + 1} bridge after play ${seg.repeat} (${formatTime(seg.start, 1)} \u2013 ${formatTime(seg.end, 1)})`;
       } else if (seg.kind === 'repeat' && seg.regionId) {
         const info = byId.get(seg.regionId);
         block.classList.add('repeat');
-        block.style.background = info?.region.color ?? 'var(--accent)';
+        block.style.background = info ? loopCss(info.region.color) : 'var(--label-red)';
         block.style.opacity = (seg.repeat ?? 1) % 2 === 0 ? '0.6' : '1';
         block.title = `Loop ${(info?.index ?? 0) + 1}, play ${seg.repeat} of ${seg.repeats} (${formatTime(seg.outStart, 1)})`;
         if (pct > 4) block.textContent = `${seg.repeat}×`;
@@ -114,7 +115,7 @@ export class TimelineStrip {
       const next = segments.slice(i, j).find((s, k) => k > 0 && s.kind === 'repeat');
       const period = next ? next.outStart - first.outStart : loopLen;
       const info = byId.get(seg.regionId);
-      const color = info?.region.color ?? 'var(--accent)';
+      const color = info ? loopCss(info.region.color) : 'var(--label-red)';
       const loopPct = Math.min(100, (loopLen / period) * 100);
       const periodPct = (period / run) * 100;
       const block = h('div', { class: 'tl-block repeat run', style: { width: `${(run / this.total) * 100}%` } });

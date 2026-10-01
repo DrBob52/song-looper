@@ -1,4 +1,4 @@
-import { expect, test } from '@playwright/test';
+import { expect, test } from './fixtures';
 
 // The Chromium build used for tests ships without AAC, and no Chrome or
 // Firefox build can decode Apple Lossless, so these load through the bundled

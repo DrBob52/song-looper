@@ -1,6 +1,7 @@
 import { formatTime } from '../util/time';
 import { h } from './dom';
 import { NumberField, parsePlainNumber } from './numberField';
+import { RecordSpin } from './record';
 
 export type PlayMode = 'original' | 'extended';
 
@@ -27,6 +28,7 @@ export class Transport {
   readonly el: HTMLElement;
   private playBtn: HTMLButtonElement;
   private playWord: HTMLElement;
+  private spin: RecordSpin;
   private timeEl: HTMLElement;
   private exportBtn: HTMLButtonElement;
   private modeBtns: Record<PlayMode, HTMLButtonElement>;
@@ -45,8 +47,13 @@ export class Transport {
   private exportBlockedReason: string | null = null;
 
   constructor(private cb: TransportCallbacks) {
-    // The big round button: a disc with a drawn triangle or pause bars, and the word beside it.
+    // The record is the play/pause button: a vinyl with a red label that shows a drawn triangle or pause bars, and the
+    // word beside it. It turns while playing (see RecordSpin).
     this.playWord = h('span', { class: 'play-word', text: 'Play' });
+    const disc = h('span', { class: 'record-disc' });
+    const label = h('span', { class: 'record-label' });
+    disc.append(label);
+    this.spin = new RecordSpin(disc, label);
     this.playBtn = h(
       'button',
       {
@@ -54,7 +61,14 @@ export class Transport {
         attrs: { type: 'button', 'aria-pressed': 'false', 'data-testid': 'play', title: 'Play or pause (Space)' },
         on: { click: () => this.cb.onTogglePlay() },
       },
-      [h('span', { class: 'play-disc', attrs: { 'aria-hidden': 'true' } }, [h('span', { class: 'play-glyph' })]), this.playWord],
+      [
+        h('span', { class: 'record', attrs: { 'aria-hidden': 'true' } }, [
+          disc,
+          h('span', { class: 'record-sheen' }),
+          h('span', { class: 'record-glyph' }),
+        ]),
+        this.playWord,
+      ],
     );
     const mk = (mode: PlayMode, label: string): HTMLButtonElement =>
       h('button', {
@@ -63,7 +77,7 @@ export class Transport {
         attrs: { type: 'button', 'data-testid': `mode-${mode}`, 'aria-pressed': 'false' },
         on: { click: () => this.cb.onMode(mode) },
       });
-    this.modeBtns = { original: mk('original', 'Original'), extended: mk('extended', 'Extended') };
+    this.modeBtns = { original: mk('original', 'A \u00b7 Original'), extended: mk('extended', 'B \u00b7 Extended') };
     this.timeEl = h('span', { class: 'time', text: '0:00.0 / 0:00.0', attrs: { 'data-testid': 'time' } });
     this.status = h('span', { class: 'muted small', attrs: { 'data-testid': 'render-status', role: 'status' } });
     this.exportBtn = h('button', {
@@ -150,16 +164,17 @@ export class Transport {
     this.el = h('section', { class: 'transport', attrs: { 'aria-label': 'Transport' } }, [
       h('div', { class: 'row transport-main' }, [
         this.playBtn,
-        this.timeEl,
-        this.status,
+        h('div', { class: 'readout' }, [this.timeEl, this.status]),
         h('span', { class: 'grow' }),
-        h('div', { class: 'segmented', attrs: { role: 'group', 'aria-label': 'Play mode' } }, [
+        this.exportBtn,
+      ]),
+      h('div', { class: 'row transport-sub' }, [
+        h('div', { class: 'segmented', attrs: { role: 'group', 'aria-label': 'Side: A original song, B extended cut' } }, [
           this.modeBtns.original,
           this.modeBtns.extended,
         ]),
-        this.exportBtn,
+        this.details,
       ]),
-      this.details,
     ]);
     this.setMode('original');
     this.setSpeedPitch(1, 0);
@@ -170,6 +185,7 @@ export class Transport {
   /** Reflect the current speed/pitch in the controls. */
   setSpeedPitch(speed: number, semitones: number): void {
     this.pitchValue = semitones;
+    this.spin?.setSpeed(speed);
     this.speedInput.value = String(speed);
     this.speedField.setValue(speed);
     this.pitchField.setValue(semitones);
@@ -193,6 +209,7 @@ export class Transport {
     this.playWord.textContent = playing ? 'Pause' : 'Play';
     this.playBtn.setAttribute('aria-pressed', String(playing));
     this.playBtn.classList.toggle('playing', playing);
+    this.spin.setPlaying(playing);
   }
 
   setTime(t: number, duration: number): void {

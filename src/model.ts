@@ -92,13 +92,8 @@ export interface Plan {
 
 export const MAX_REPEATS = 9999;
 
-export const REGION_COLORS = [
-  '#2563eb',
-  '#db2777',
-  '#059669',
-  '#d97706',
-  '#7c3aed',
-  '#0891b2',
-  '#dc2626',
-  '#65a30d',
-];
+/**
+ * Loop colours: the five record-label colours of the design (`--loop-1` to `--loop-5`; the page shows the theme's
+ * version of each). Loops past the fifth reuse them in turn.
+ */
+export const REGION_COLORS = ['#c6372c', '#2e5aa8', '#d6a03d', '#2f7f79', '#7a3e6e'];

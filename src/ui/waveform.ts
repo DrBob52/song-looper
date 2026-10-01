@@ -3,6 +3,7 @@ import RegionsPlugin from 'wavesurfer.js/plugins/regions';
 import type { Region } from 'wavesurfer.js/plugins/regions';
 import type { LoopRegion, Span } from '../model';
 import { cssVar } from './dom';
+import { loopResolved } from './loopColors';
 
 export const SELECTION_ID = 'selection';
 export const HIGHLIGHT_ID = 'highlight';
@@ -68,6 +69,7 @@ export class WaveformView {
   private model = new Map<string, LoopRegion>();
   private contentText = new Map<string, string>();
   private followCursor = true;
+  private selectedId: string | null = null;
   /** A selection the app asked for (I and O keys): its region is created as given, not snapped like a drag. */
   private pendingSelection: Span | null = null;
 
@@ -82,9 +84,9 @@ export class WaveformView {
     this.ws = WaveSurfer.create({
       container,
       height: 150,
-      waveColor: cssVar('--wave') || '#94a3b8',
-      progressColor: cssVar('--wave') || '#94a3b8',
-      cursorColor: cssVar('--cursor') || '#ef4444',
+      waveColor: cssVar('--ink') || '#1d1915',
+      progressColor: cssVar('--ink') || '#1d1915',
+      cursorColor: cssVar('--label-red') || '#c6372c',
       cursorWidth: 2,
       normalize: true,
       interact: true,
@@ -110,7 +112,7 @@ export class WaveformView {
 
     // Drag on empty waveform space to make a selection.
     const stopDragSelection = this.regions.enableDragSelection(
-      { id: SELECTION_ID, color: hexToRgba(cssVar('--accent') || '#2563eb', 0.22), drag: true, resize: true },
+      { id: SELECTION_ID, color: hexToRgba(cssVar('--mustard') || '#d6a03d', 0.3), drag: true, resize: true },
       4,
     );
     this.disposers.push(stopDragSelection);
@@ -154,8 +156,14 @@ export class WaveformView {
 
   /** Re-read theme colours after a light/dark switch. */
   refreshTheme(): void {
-    const wave = cssVar('--wave') || '#94a3b8';
-    this.ws.setOptions({ waveColor: wave, progressColor: wave, cursorColor: cssVar('--cursor') || '#ef4444' });
+    const ink = cssVar('--ink') || '#1d1915';
+    this.ws.setOptions({ waveColor: ink, progressColor: ink, cursorColor: cssVar('--label-red') || '#c6372c' });
+    // loop colours, the selection and the highlight follow the theme too
+    this.setRegions([...this.model.values()], this.selectedId);
+    const selection = this.findRegion(SELECTION_ID);
+    selection?.setOptions({ color: hexToRgba(cssVar('--mustard') || '#d6a03d', 0.3) });
+    const highlight = this.findRegion(HIGHLIGHT_ID);
+    highlight?.setOptions({ color: hexToRgba(cssVar('--mustard') || '#d6a03d', 0.34) });
   }
 
   getWrapper(): HTMLElement {
@@ -242,12 +250,13 @@ export class WaveformView {
 
     for (const s of sections) {
       const line = document.createElement('div');
-      line.style.cssText = `position:absolute;top:0;bottom:0;width:0;left:${(s.start / this.duration) * 100}%;border-left:1px solid var(--section, #f59e0b);`;
+      line.style.cssText = `position:absolute;top:0;bottom:0;width:0;left:${(s.start / this.duration) * 100}%;border-left:1px solid var(--mustard, #d6a03d);`;
+      // a small mustard sticker with the section's letter
       const tag = document.createElement('div');
       tag.textContent = s.label;
       tag.title = s.hint ? `Section ${s.label} (${s.hint})` : `Section ${s.label}`;
       tag.style.cssText =
-        'position:absolute;bottom:0;left:0;font:600 10px/1.2 system-ui,sans-serif;padding:1px 4px;border-radius:0 4px 0 0;background:var(--section, #f59e0b);color:#111;';
+        'position:absolute;bottom:4px;left:3px;min-width:17px;height:17px;display:grid;place-items:center;font:700 10px/1 var(--font-mono, monospace);padding:0 3px;border-radius:9px;background:var(--mustard, #d6a03d);color:#1d1915;box-shadow:0 1px 1px rgba(0,0,0,.3);';
       line.appendChild(tag);
       overlay.appendChild(line);
     }
@@ -271,6 +280,7 @@ export class WaveformView {
   /** Reconcile wavesurfer regions with the loop model. */
   setRegions(loops: LoopRegion[], selectedId: string | null): void {
     this.model = new Map(loops.map((l) => [l.id, l]));
+    this.selectedId = selectedId;
     const wanted = new Set(loops.map((l) => l.id));
     for (const r of [...this.regions.getRegions()]) {
       if (r.id === SELECTION_ID || r.id === HIGHLIGHT_ID) continue;
@@ -282,7 +292,8 @@ export class WaveformView {
     }
     loops.forEach((loop, index) => {
       const selected = loop.id === selectedId;
-      const color = hexToRgba(loop.color, selected ? 0.42 : 0.28);
+      const solid = loopResolved(loop.color);
+      const color = hexToRgba(solid, selected ? 0.42 : 0.28);
       let r = this.findRegion(loop.id);
       if (!r) {
         r = this.regions.addRegion({
@@ -305,7 +316,9 @@ export class WaveformView {
         r.setContent(text);
       }
       if (r.element) {
-        r.element.style.outline = selected ? `2px solid ${loop.color}` : 'none';
+        // translucent loop colour with a 2 px band of the solid colour along the top
+        r.element.style.borderTop = `2px solid ${solid}`;
+        r.element.style.outline = selected ? `2px solid ${solid}` : 'none';
         r.element.style.outlineOffset = '-2px';
         r.element.dataset.regionId = loop.id;
       }
@@ -330,7 +343,7 @@ export class WaveformView {
         id: SELECTION_ID,
         start: sel.start,
         end: sel.end,
-        color: hexToRgba(cssVar('--accent') || '#2563eb', 0.22),
+        color: hexToRgba(cssVar('--mustard') || '#d6a03d', 0.3),
         drag: true,
         resize: true,
       });
@@ -338,7 +351,7 @@ export class WaveformView {
     this.tracks.set(SELECTION_ID, { lastStart: sel.start, lastEnd: sel.end, rawStart: sel.start, rawEnd: sel.end });
     const r = this.findRegion(SELECTION_ID);
     if (r?.element) {
-      r.element.style.border = '1px dashed var(--accent, #2563eb)';
+      r.element.style.border = '1.5px dashed var(--ink, #1d1915)';
       r.element.dataset.regionId = SELECTION_ID;
     }
   }
@@ -356,13 +369,13 @@ export class WaveformView {
         id: HIGHLIGHT_ID,
         start: span.start,
         end: span.end,
-        color: hexToRgba(cssVar('--highlight') || '#f59e0b', 0.3),
+        color: hexToRgba(cssVar('--mustard') || '#d6a03d', 0.34),
         drag: false,
         resize: false,
       });
       if (r.element) {
         r.element.style.pointerEvents = 'none';
-        r.element.style.boxShadow = 'inset 0 0 0 2px var(--highlight, #f59e0b)';
+        r.element.style.boxShadow = 'inset 0 0 0 2px var(--mustard, #d6a03d)';
         r.element.dataset.regionId = HIGHLIGHT_ID;
       }
     }
@@ -393,7 +406,7 @@ export class WaveformView {
     }
     region.setOptions({ start, end });
     if (region.element) {
-      region.element.style.border = '1px dashed var(--accent, #2563eb)';
+      region.element.style.border = '1.5px dashed var(--ink, #1d1915)';
       region.element.dataset.regionId = SELECTION_ID;
     }
     this.tracks.set(SELECTION_ID, { lastStart: start, lastEnd: end, rawStart: start, rawEnd: end });

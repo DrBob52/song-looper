@@ -1,7 +1,8 @@
 import { closeSync, mkdtempSync, openSync, readSync, rmSync, statSync, unlinkSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { chromium, expect, test } from '@playwright/test';
+import { chromium } from '@playwright/test';
+import { expect, test } from './fixtures';
 import { clickTrackFixture, loadFixture, waitForAnalysis } from './helpers';
 
 // Opt-in: BIG_EXPORT_SECONDS=14400 BIG_EXPORT_BITS=16 npx playwright test big-export

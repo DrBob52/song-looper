@@ -274,7 +274,7 @@ export class App {
     ]);
     this.songPanel = h(
       'div',
-      { attrs: { hidden: true, 'data-testid': 'song-panel' }, style: { display: 'grid', gap: '14px' } },
+      { class: 'song-panel', attrs: { hidden: true, 'data-testid': 'song-panel' } },
       [
         h('section', { class: 'card', attrs: { 'aria-label': 'Waveform' } }, [
           toolbar,
@@ -306,7 +306,7 @@ export class App {
       h('div', { class: 'app' }, [
         h('header', { class: 'top' }, [
           h('h1', { text: 'Song Looper' }),
-          h('p', { text: 'Drop a song, find sections that loop cleanly, repeat them, and export an extended WAV.' }),
+          h('p', { text: 'Drop in a record. Press an extended cut.' }),
         ]),
         this.dropzone.el,
         this.songPanel,

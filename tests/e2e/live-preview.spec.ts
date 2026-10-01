@@ -1,4 +1,4 @@
-import { expect, test } from '@playwright/test';
+import { expect, test } from './fixtures';
 import type { Page } from '@playwright/test';
 import { SONG1 } from '../fixtures/synth';
 import { clickTrackFixture, loadFixture, makeChordFixture, waitForAnalysis } from './helpers';

@@ -39,7 +39,7 @@ export class Dropzone {
     });
     this.zone = h('div', {
       class: 'dropzone',
-      attrs: { role: 'button', tabindex: 0, 'aria-label': 'Drop a song or click to choose', 'data-testid': 'dropzone' },
+      attrs: { role: 'button', tabindex: 0, 'aria-label': 'Drop a song here or click to choose', 'data-testid': 'dropzone' },
       on: {
         click: () => this.input.click(),
         keydown: (e) => {
@@ -77,22 +77,26 @@ export class Dropzone {
     this.showEmpty();
   }
 
+  /** The sleeve is a face with the song on it and a record sliding out of its edge (drawn in CSS). */
+  private sleeve(children: HTMLElement[]): void {
+    clear(this.zone);
+    this.zone.append(h('span', { class: 'sleeve-record', attrs: { 'aria-hidden': 'true' } }), h('div', { class: 'sleeve-face' }, children));
+  }
+
   private showEmpty(): void {
     this.zone.classList.remove('compact');
-    clear(this.zone);
-    this.zone.append(
-      h('div', { class: 'dz-title', text: 'Drop a song or click to choose' }),
+    this.sleeve([
+      h('div', { class: 'dz-title', text: 'Drop a song here or click to choose' }),
       h('div', {
         class: 'dz-sub',
         text: 'mp3, wav, m4a, flac or ogg. Everything stays in your browser; nothing is uploaded.',
       }),
-    );
+    ]);
   }
 
   showFile(info: FileInfo): void {
     this.zone.classList.add('compact');
-    clear(this.zone);
-    this.zone.append(
+    this.sleeve([
       h('div', { class: 'dz-title', text: info.name, attrs: { 'data-testid': 'file-name' } }),
       h('div', {
         class: 'dz-sub mono',
@@ -100,7 +104,7 @@ export class Dropzone {
         attrs: { 'data-testid': 'file-meta' },
       }),
       h('div', { class: 'dz-sub', text: 'Drop or click to choose another song' }),
-    );
+    ]);
   }
 
   clearFile(): void {

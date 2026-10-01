@@ -1,5 +1,5 @@
 import { readFileSync } from 'node:fs';
-import { expect, test } from '@playwright/test';
+import { expect, test } from './fixtures';
 import type { Page } from '@playwright/test';
 import { decodeInBrowser, dragSelect, loadFixture, makeFixture, parseWav } from './helpers';
 

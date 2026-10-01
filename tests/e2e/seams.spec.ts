@@ -1,5 +1,5 @@
 import { readFileSync } from 'node:fs';
-import { expect, test } from '@playwright/test';
+import { expect, test } from './fixtures';
 import type { Page } from '@playwright/test';
 import { SONG1 } from '../fixtures/synth';
 import { appState, loadFixture, makeChordFixture, parseWav, waitForAnalysis } from './helpers';

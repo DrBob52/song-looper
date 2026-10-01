@@ -1,7 +1,7 @@
-import { expect, test } from '@playwright/test';
+import { expect, test } from './fixtures';
 import type { Page } from '@playwright/test';
 import { SONG1 } from '../fixtures/synth';
-import { appState, loadFixture, makeChordFixture, waitForAnalysis } from './helpers';
+import { appState, loadFixture, makeChordFixture, waitForAnalysis, wavFixture } from './helpers';
 
 // SPEC-v1.2.md section 1: exact loop times, nudges, Set from playhead, I and O.
 
@@ -260,4 +260,31 @@ test('Add loop opens a loop at the playhead: 4 bars, or 8 s without a beat', asy
   const [r] = await regions(page);
   const barSeconds = await appState<number>(page, 's.grid.barSeconds');
   expect(r!.end - r!.start).toBeCloseTo(4 * barSeconds, 1);
+});
+
+test('without a steady beat there are no beat nudges, and Add loop uses 8 s', async ({ page }) => {
+  // noise has no beat
+  let x = 987654321;
+  const noise = Float32Array.from({ length: 44100 * 25 }, () => {
+    x ^= x << 13;
+    x >>>= 0;
+    x ^= x >>> 17;
+    x ^= x << 5;
+    x >>>= 0;
+    return (x / 2147483648 - 1) * 0.3;
+  });
+  await loadFixture(page, await wavFixture([noise], 44100, 'noise.wav'));
+  await waitForAnalysis(page);
+  expect(await appState<boolean>(page, 's.grid.steady')).toBe(false);
+  await seek(page, 3.2);
+  await page.getByTestId('add-loop').click();
+  const [r] = await regions(page);
+  expect(r!.start).toBeCloseTo(3.2, 3);
+  expect(r!.end - r!.start).toBeCloseTo(8, 3);
+  await expect(page.getByTestId('start-ms-inc').first()).toBeVisible();
+  await expect(page.getByTestId('start-beat-inc').first()).toBeHidden();
+  await expect(page.getByTestId('end-beat-dec').first()).toBeHidden();
+  // millisecond nudges and Set from playhead still work
+  await page.getByTestId('end-ms-inc').first().click();
+  expect(Math.round(((await regions(page))[0]!.end - r!.end) * 1000)).toBe(10);
 });

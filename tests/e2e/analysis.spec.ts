@@ -1,4 +1,4 @@
-import { expect, test } from '@playwright/test';
+import { expect, test } from './fixtures';
 import { appState, dragSelect, loadFixture, makeFixture, waitForAnalysis } from './helpers';
 
 interface Reg {

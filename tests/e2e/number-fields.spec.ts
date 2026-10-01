@@ -1,4 +1,4 @@
-import { expect, test } from '@playwright/test';
+import { expect, test } from './fixtures';
 import type { Page } from '@playwright/test';
 import { SONG1 } from '../fixtures/synth';
 import { appState, clickTrackFixture, loadFixture, makeChordFixture, waitForAnalysis } from './helpers';
@@ -277,11 +277,11 @@ test('the play/pause is large and obvious, Space still toggles it, and every loo
   const fixture = await makeChordFixture(SONG1, 'song1.wav');
   await loadFixture(page, fixture);
   const play = page.getByTestId('play');
-  const box = (await play.locator('.play-disc').boundingBox())!;
+  const box = (await play.locator('.record').boundingBox())!;
   expect(box.width).toBeGreaterThanOrEqual(64);
   expect(box.height).toBeGreaterThanOrEqual(64);
   expect(Math.abs(box.width - box.height)).toBeLessThan(1);
-  const radius = await play.locator('.play-disc').evaluate((el) => getComputedStyle(el).borderRadius);
+  const radius = await play.locator('.record-disc').evaluate((el) => getComputedStyle(el).borderRadius);
   expect(radius).toMatch(/50%|3[2-9]px|[4-9]\d+px/);
   await expect(play).toHaveText('Play');
   await expect(play).toHaveAttribute('aria-pressed', 'false');
@@ -322,7 +322,7 @@ test('the play button stays at least 56 px on a phone', async ({ browser }) => {
   const page = await context.newPage();
   const fixture = await clickTrackFixture(120, 20);
   await loadFixture(page, fixture);
-  const box = (await page.getByTestId('play').locator('.play-disc').boundingBox())!;
+  const box = (await page.getByTestId('play').locator('.record').boundingBox())!;
   expect(box.width).toBeGreaterThanOrEqual(56);
   expect(box.height).toBeGreaterThanOrEqual(56);
   await context.close();

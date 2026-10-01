@@ -1,4 +1,4 @@
-import { expect, test } from '@playwright/test';
+import { expect, test } from './fixtures';
 import { loadFixture, makeFixture } from './helpers';
 
 test('loads a file, shows the waveform and plays', async ({ page }) => {

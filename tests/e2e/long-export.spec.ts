@@ -1,5 +1,5 @@
 import { closeSync, openSync, readSync, statSync } from 'node:fs';
-import { expect, test } from '@playwright/test';
+import { expect, test } from './fixtures';
 import type { Page, Worker } from '@playwright/test';
 import { appState, clickTrackFixture, loadFixture, waitForAnalysis } from './helpers';
 
