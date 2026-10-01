@@ -125,7 +125,7 @@ export class RenderClient {
    */
   export(
     plan: Plan,
-    opts: { crossfadeMs: number; bitDepth: BitDepth; stretch: StretchParams | null; chunkSeconds?: number },
+    opts: { crossfadeMs: number; bitDepth: BitDepth; stretch: StretchParams | null; chunkSeconds?: number; loopFile?: { loopReady: boolean } },
     onProgress: (p: ExportProgress) => void,
   ): Promise<ExportOutput> {
     const id = this.nextId++;

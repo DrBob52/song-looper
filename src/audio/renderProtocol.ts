@@ -21,6 +21,8 @@ export type WorkerRequest =
       stretch: StretchParams | null;
       /** Seconds rendered per piece (tests use small ones); default RENDER_CONFIG.exportChunkSeconds. */
       chunkSeconds?: number;
+      /** Export one loop as a file of its own: `plan` has just that loop (SPEC-v1.3.md 7.1). */
+      loopFile?: { loopReady: boolean };
     }
   /** The main thread has taken `bytes` of exported data (flow control: the worker never runs far ahead). */
   | { type: 'ack'; id: number; bytes: number };

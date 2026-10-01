@@ -1099,6 +1099,8 @@ export class RangeRenderer {
   readonly channelCount: number;
   /** Length of the extended song in frames: after the cuts, and trimmed by the Ending. */
   readonly total: number;
+  /** The plan's loops in sample indices, after the zero-crossing snaps (a loop file is laid out from them). */
+  readonly regions: readonly SampleRegion[];
   private access: PlanParts;
   private fades: FadeCache = new Map();
 
@@ -1109,8 +1111,8 @@ export class RangeRenderer {
   ) {
     this.sampleRate = buffer.sampleRate;
     this.channelCount = buffer.numberOfChannels;
-    const regions = regionsToSamples(buffer, plan, options);
-    this.access = new PlanParts(regions, buffer.length, buffer.sampleRate, options, planExtras(buffer, plan, options));
+    this.regions = regionsToSamples(buffer, plan, options);
+    this.access = new PlanParts(this.regions, buffer.length, buffer.sampleRate, options, planExtras(buffer, plan, options));
     this.total = this.access.total;
   }
 

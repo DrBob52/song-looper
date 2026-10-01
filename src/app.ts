@@ -19,6 +19,7 @@ import {
   plannedFrames,
 } from './audio/render';
 import { exportFrames, wavTooLong } from './audio/exportPieces';
+import { loopFileLayout, loopFileName, loopFilePlan } from './audio/loopExport';
 import { WorkerChunkSource } from './audio/chunkSource';
 import { ChunkStream, STREAM_DEFAULTS } from './audio/stream';
 import { ExportCancelledError, RenderClient } from './audio/renderClient';
@@ -59,6 +60,7 @@ import type { EndingMode } from './ui/endingPanel';
 import { Dropzone } from './ui/dropzone';
 import { h } from './ui/dom';
 import { ExportDialog } from './ui/exportDialog';
+import type { ExportOptions } from './ui/exportDialog';
 import { LengthPanel } from './ui/lengthPanel';
 import { ColumnLayout } from './ui/layout';
 import { NumberField, parsePlainNumber } from './ui/numberField';
@@ -205,6 +207,8 @@ export class App {
   private lastEndAt: number | null = null;
   private lengthPanel: LengthPanel;
   private exportDialog: ExportDialog;
+  /** What the open export dialog exports: the extended song, or one loop of its own (SPEC-v1.3.md 7.1). */
+  private exportTarget: { kind: 'song' } | { kind: 'loop'; id: string } = { kind: 'song' };
   private songPanel: HTMLElement;
   private appEl!: HTMLElement;
   private skinPicker!: SkinPicker;
@@ -256,6 +260,7 @@ export class App {
       onAuditionOriginal: (id) => void this.auditionSeam(id, true),
       onSmoothToggle: (id, on) => this.setSmooth(id, on),
       onUndoSeam: (id) => this.undoSeam(id),
+      onExportLoop: (id) => void this.openExportLoop(id),
       onBridgeToggle: (id, on) => this.setBridge(id, on),
       onNearbyAudition: (id) => void this.auditionNearby(id),
       onNearbyUse: (id) => this.useNearby(id),
@@ -1763,16 +1768,14 @@ export class App {
       return;
     }
     const neutral = isNeutral({ tempo: speed, pitchSemitones: pitch });
-    const parts: string[] = [];
-    if (Math.abs(speed - 1) > 1e-6) parts.push(`${speed.toFixed(2)}x speed`);
-    if (pitch !== 0) parts.push(`${pitch > 0 ? '+' : ''}${pitch} semitone${Math.abs(pitch) === 1 ? '' : 's'}`);
     const base = song.name.replace(/\.[^./\\]+$/, '');
     const framesOf = (bake: boolean): number => (bake ? exportFrames(exactFrames, { tempo: speed, pitchSemitones: pitch }) : exactFrames);
+    this.exportTarget = { kind: 'song' };
     this.exportDialog.open({
       defaultName: `${base} (extended).wav`,
       bitDepth,
       speedPitchNeutral: neutral,
-      speedPitchLabel: parts.join(', '),
+      speedPitchLabel: this.speedPitchLabel(),
       format: `${formatRate(song.sampleRate)} ${formatChannels(song.channels)}`,
       estimate: (depth, bake) => {
         const frames = framesOf(bake);
@@ -1782,18 +1785,72 @@ export class App {
     });
   }
 
-  private async doExport(opts: { filename: string; bitDepth: BitDepth; applySpeedPitch: boolean }): Promise<void> {
+  /** "1.10x speed, +2 semitones": what Apply speed and pitch changes would put into the file. */
+  private speedPitchLabel(): string {
+    const { speed, pitch } = this.store.get();
+    const parts: string[] = [];
+    if (Math.abs(speed - 1) > 1e-6) parts.push(`${speed.toFixed(2)}x speed`);
+    if (pitch !== 0) parts.push(`${pitch > 0 ? '+' : ''}${pitch} semitone${Math.abs(pitch) === 1 ? '' : 's'}`);
+    return parts.join(', ');
+  }
+
+  /**
+   * Export loop (SPEC-v1.3.md 7.1): the export dialog for one loop's own audio file. Its seam plan is settled first, so the
+   * file holds what the loop sounds like; the size and the WAV cap check follow the repeats typed in the dialog.
+   */
+  async openExportLoop(id: string): Promise<void> {
+    if (!this.store.get().regions.some((r) => r.id === id)) return;
+    await this.seamsSettled();
+    const { song, regions, speed, pitch, bitDepth } = this.store.get();
+    const region = regions.find((r) => r.id === id);
+    if (!song || !region) return;
+    let layout: ReturnType<typeof loopFileLayout>;
+    try {
+      layout = loopFileLayout(song.buffer, region);
+    } catch (err) {
+      this.notify(err instanceof Error ? err.message : String(err));
+      return;
+    }
+    const stretch = { tempo: speed, pitchSemitones: pitch };
+    const framesOf = (repeats: number, bake: boolean): number => (bake ? exportFrames(layout.frames(repeats), stretch) : layout.frames(repeats));
+    this.exportTarget = { kind: 'loop', id };
+    this.exportDialog.open({
+      defaultName: loopFileName(song.name, regions.indexOf(region) + 1, region.start, region.end),
+      bitDepth,
+      speedPitchNeutral: isNeutral(stretch),
+      speedPitchLabel: this.speedPitchLabel(),
+      format: `${formatRate(song.sampleRate)} ${formatChannels(song.channels)}`,
+      estimate: (depth, bake, repeats) => {
+        const frames = framesOf(repeats, bake);
+        return { bytes: estimateWavSize(frames, song.channels, depth), seconds: frames / song.sampleRate };
+      },
+      problem: (depth, bake, repeats) => wavTooLong(framesOf(repeats, bake), song.sampleRate, song.channels, depth),
+      loop: { bridgeOn: region.bridge === true },
+    });
+  }
+
+  private async doExport(opts: ExportOptions): Promise<void> {
+    const target = this.exportTarget;
     const label = opts.applySpeedPitch ? 'Rendering, applying speed and pitch, and writing the WAV' : 'Rendering and writing the WAV';
     this.exportDialog.setProgress(`${label}\u2026`, 0);
     // what the export plays is what the preview played: every loop's seam plan is in first
     await this.seamsSettled();
-    const { seamMs, speed, pitch } = this.store.get();
+    const { seamMs, speed, pitch, regions } = this.store.get();
     const stretch = opts.applySpeedPitch ? { tempo: speed, pitchSemitones: pitch } : null;
+    // one loop as a file of its own: a plan with just that loop, played `repeats` times, optionally loop-ready
+    let plan = this.plan();
+    let loopFile: { loopReady: boolean } | undefined;
+    if (target.kind === 'loop') {
+      const region = regions.find((r) => r.id === target.id);
+      if (!region) throw new Error('That loop is gone.');
+      plan = loopFilePlan(region, opts.repeats ?? 1);
+      loopFile = { loopReady: opts.loopReady !== false };
+    }
     const started = performance.now();
     try {
       const { blob } = await this.renderClient.export(
-        this.plan(),
-        { crossfadeMs: seamMs, bitDepth: opts.bitDepth, stretch },
+        plan,
+        { crossfadeMs: seamMs, bitDepth: opts.bitDepth, stretch, ...(loopFile ? { loopFile } : {}) },
         ({ fraction }) => {
           const elapsed = (performance.now() - started) / 1000;
           const left = fraction > 0.02 ? (elapsed * (1 - fraction)) / fraction : null;

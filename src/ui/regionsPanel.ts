@@ -35,6 +35,8 @@ export interface RegionsPanelCallbacks {
   onBridgeToggle(id: string, on: boolean): void;
   /** Restore the original seam and turn smoothing off for the loop. */
   onUndoSeam(id: string): void;
+  /** Export the loop as an audio file of its own (SPEC-v1.3.md 7.1): opens the export dialog in loop mode. */
+  onExportLoop(id: string): void;
   /** Hear the seam of the nearby loop with a cleaner chord change. */
   onNearbyAudition(id: string): void;
   /** Replace the loop's points with the nearby loop's. */
@@ -359,6 +361,16 @@ export class RegionsPanel {
       },
       on: { click: () => this.cb.onAuditionOriginal(id) },
     });
+    const exportBtn = h('button', {
+      class: 'btn sm quiet',
+      text: 'Export loop',
+      attrs: {
+        type: 'button',
+        'data-testid': 'export-loop',
+        title: 'Save this loop as an audio file of its own, repeated as often as you like, ready to loop in a DAW or sampler',
+      },
+      on: { click: () => this.cb.onExportLoop(id) },
+    });
     const chip = h('span', { class: 'chip', attrs: { 'data-testid': 'seam-chip' } });
     const seam = h('span', { class: 'seam-status', attrs: { hidden: true } }, [
       h('span', { class: 'muted small', text: 'Seam' }),
@@ -405,7 +417,7 @@ export class RegionsPanel {
               [bridge, h('span', { text: 'Bridge' })],
             ),
           ]),
-          h('div', { class: 'region-actions' }, [seamBtn, originalBtn, removeBtn]),
+          h('div', { class: 'region-actions' }, [seamBtn, originalBtn, exportBtn, removeBtn]),
           summary,
           bridgeStatus,
           bridgeHint,

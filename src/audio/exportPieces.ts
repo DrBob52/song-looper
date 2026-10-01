@@ -1,6 +1,7 @@
 import type { Plan } from '../model';
 import { formatClockFloor } from '../util/time';
 import { RENDER_CONFIG } from './config';
+import { LoopFileRenderer } from './loopExport';
 import { RangeRenderer } from './render';
 import type { StretchParams } from './renderProtocol';
 import { STRETCH_BLOCK, StreamingStretcher, isNeutral, stretchedLength } from './stretch';
@@ -17,6 +18,11 @@ export interface ExportJob {
   stretch: StretchParams | null;
   /** Seconds of the extended song rendered, encoded and handed out at a time. Default RENDER_CONFIG.exportChunkSeconds. */
   chunkSeconds?: number;
+  /**
+   * Export one loop as a file of its own (SPEC-v1.3.md 7.1): `plan` is then a plan with just that loop (see loopFilePlan),
+   * and the file is its repeats, optionally made loop-ready (the end crossfaded into the song before the loop's start).
+   */
+  loopFile?: { loopReady: boolean };
 }
 
 export interface ExportHooks {
@@ -65,7 +71,9 @@ export function wavTooLong(frames: number, sampleRate: number, channels: number,
  */
 export async function exportWavPieces(job: ExportJob, hooks: ExportHooks): Promise<ExportResult> {
   const { buffer, bitDepth } = job;
-  const renderer = new RangeRenderer(buffer, job.plan, { crossfadeMs: job.crossfadeMs });
+  const renderer: { total: number; render(from: number, length: number): Float32Array[] } = job.loopFile
+    ? new LoopFileRenderer(buffer, job.plan, { crossfadeMs: job.crossfadeMs, loopReady: job.loopFile.loopReady })
+    : new RangeRenderer(buffer, job.plan, { crossfadeMs: job.crossfadeMs });
   const channels = buffer.numberOfChannels;
   const sampleRate = buffer.sampleRate;
   const total = renderer.total;

@@ -53,6 +53,7 @@ async function runExport(msg: Extract<WorkerRequest, { type: 'export' }>): Promi
       bitDepth: msg.bitDepth,
       stretch: msg.stretch,
       chunkSeconds: msg.chunkSeconds,
+      ...(msg.loopFile ? { loopFile: msg.loopFile } : {}),
     },
     {
       onHeader: (bytes) => scope.postMessage({ type: 'header', id, bytes: bytes.buffer }, [bytes.buffer]),

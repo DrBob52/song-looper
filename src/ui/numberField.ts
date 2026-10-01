@@ -123,6 +123,14 @@ export class NumberField {
     if (changed) this.clearError();
   }
 
+  /** Start over with a value, dropping any half-typed text and message (a dialog's field when the dialog opens again). */
+  reset(value: number): void {
+    this.dirty = false;
+    this.value = value;
+    this.input.value = this.opts.format(value);
+    this.clearError();
+  }
+
   setDisabled(disabled: boolean, title = ''): void {
     this.input.disabled = disabled;
     this.input.title = disabled ? title : '';

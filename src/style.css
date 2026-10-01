@@ -1945,6 +1945,26 @@ dialog.export-dialog::backdrop {
   padding: 0 4px;
 }
 
+/* Export loop (SPEC-v1.3.md 7.1): repeats in the file, Loop-ready file and the bridge note, in a panel of their own */
+.export-loop {
+  display: grid;
+  gap: 10px;
+  padding: 10px 12px;
+  border: 1px solid var(--rule);
+  border-radius: 6px;
+  background: var(--paper);
+}
+
+.export-loop .field {
+  align-items: flex-start;
+  gap: 4px 10px;
+}
+
+/* the label sits level with the text of the field (the field's message can come under it) */
+.export-loop .field > label:first-child {
+  padding-top: 8px;
+}
+
 .col {
   display: grid;
   gap: 4px;
