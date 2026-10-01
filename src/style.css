@@ -492,6 +492,36 @@ kbd {
   flex: 1 1 0;
 }
 
+/* Seam chip: Clean / OK / Rough. The word carries the meaning; the colour is a second cue. */
+.seam-status {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+}
+
+.chip {
+  display: inline-block;
+  padding: 1px 8px;
+  border-radius: 999px;
+  border: 1px solid currentColor;
+  font-size: 0.78rem;
+  font-weight: 600;
+  line-height: 1.5;
+  cursor: help;
+}
+
+.chip-clean {
+  color: var(--ok);
+}
+
+.chip-ok {
+  color: var(--warn);
+}
+
+.chip-rough {
+  color: var(--danger);
+}
+
 input.num {
   width: 4.2em;
   text-align: center;

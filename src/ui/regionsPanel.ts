@@ -1,7 +1,9 @@
+import type { SeamReport } from '../analysis/types';
 import type { LoopRegion } from '../model';
 import { MAX_REPEATS } from '../model';
 import { formatTime } from '../util/time';
 import { h } from './dom';
+import { chipLabel, chipTitle } from './seamText';
 
 export interface RegionsPanelCallbacks {
   onAdd(): void;
@@ -22,6 +24,8 @@ export interface RegionsPanelInfo {
   previewingId: string | null;
   /** Repeat counts are computed from a target length, so the steppers are read-only. */
   repeatsLocked: boolean;
+  /** The seam report of a region, once the analysis worker has delivered it. */
+  seamOf(region: LoopRegion): SeamReport | null;
 }
 
 interface Row {
@@ -35,6 +39,8 @@ interface Row {
   inc: HTMLButtonElement;
   snap: HTMLInputElement;
   loopBtn: HTMLButtonElement;
+  seam: HTMLElement;
+  chip: HTMLElement;
 }
 
 /** The user's loop regions, each with its own repeat count. Rows are updated in place (keyed by id). */
@@ -103,6 +109,15 @@ export class RegionsPanel {
       row.snap.checked = region.snapToBars !== false;
       row.snap.disabled = !info.hasGrid;
       row.snap.title = info.hasGrid ? 'Snap edges to bars (off: snap to beats). Shift-drag to ignore.' : 'Snapping needs beat analysis';
+      const report = info.seamOf(region);
+      row.seam.hidden = !report;
+      if (report) {
+        row.chip.textContent = chipLabel(report.chip);
+        row.chip.dataset.chip = report.chip;
+        row.chip.className = `chip chip-${report.chip}`;
+        row.chip.title = chipTitle(report);
+        row.chip.setAttribute('aria-label', `Seam: ${chipLabel(report.chip)}`);
+      }
       const previewing = info.previewingId === region.id;
       row.loopBtn.textContent = previewing ? 'Stop' : 'Loop';
       row.loopBtn.classList.toggle('active', previewing);
@@ -158,6 +173,11 @@ export class RegionsPanel {
       attrs: { type: 'button', 'data-testid': 'audition-seam', title: 'Hear the jump from the loop end back to its start' },
       on: { click: () => this.cb.onAuditionSeam(id) },
     });
+    const chip = h('span', { class: 'chip', attrs: { 'data-testid': 'seam-chip' } });
+    const seam = h('span', { class: 'seam-status', attrs: { hidden: true } }, [
+      h('span', { class: 'muted small', text: 'Seam' }),
+      chip,
+    ]);
     const removeBtn = h('button', {
       class: 'btn sm danger',
       text: 'Remove',
@@ -178,7 +198,7 @@ export class RegionsPanel {
       [
         swatch,
         h('div', { class: 'region-main' }, [
-          h('div', { class: 'region-title' }, [title, times, meta]),
+          h('div', { class: 'region-title' }, [title, times, meta, seam]),
           h('div', { class: 'region-controls' }, [
             h('span', { class: 'field' }, [h('span', { text: 'Repeats' }), dec, repeats, inc]),
             h('label', { class: 'field' }, [snap, h('span', { text: 'Snap to bars' })]),
@@ -190,7 +210,7 @@ export class RegionsPanel {
         ]),
       ],
     );
-    return { el, swatch, title, times, meta, repeats, dec, inc, snap, loopBtn };
+    return { el, swatch, title, times, meta, repeats, dec, inc, snap, loopBtn, seam, chip };
   }
 }
 

@@ -173,6 +173,32 @@ export const ANALYSIS_CONFIG = {
     starThresholds: [0.3, 0.45, 0.6, 0.75],
   },
 
+  /** SPEC-seams.md 3: how a seam is scored (and later smoothed). */
+  seam: {
+    /** Seam quality: harmony is what the user hears, so it gets half the weight (SPEC-seams.md 3.5). */
+    quality: { transient: 0.25, spectral: 0.25, harmony: 0.5 },
+    /**
+     * Chip thresholds on the seam quality: at least `clean` reads Clean, at least `ok` reads OK, else Rough.
+     * `ok` sits above 0.5, the best a seam can do when the chord change is not in the song at all.
+     */
+    chip: { clean: 0.7, ok: 0.55 },
+    /**
+     * Transient cover: the seam hides best right before a strong hit. A hit whose onset peak lies within
+     * `aheadMs` after the seam counts for it; a hit within `behindMs` around the seam (the seam slices through
+     * an attack) counts against it by `behindWeight`. Strengths are relative to the `refPercentile` of the
+     * song's beat-onset strengths.
+     */
+    transient: { aheadMs: [6, 40], behindMs: [20, 3], behindWeight: 0.5, refPercentile: 0.5 },
+    /**
+     * Spectral continuity compares the last analysis frame wholly before the loop end with the first one wholly
+     * after the loop start (`frameOffset` frames from the edges, so that neither overlaps the other side), and
+     * normalises by the song's typical change across the same bar position (`bucketsPerBeat` positions per beat;
+     * a position with fewer than `minSamples` frames pools its neighbours, up to `maxSpread` on either side).
+     * `minTypicalDb` stops a flat part of the song from making every change look huge.
+     */
+    spectral: { frameOffset: 2, minTypicalDb: 0.5, bucketsPerBeat: 32, minSamples: 5, maxSpread: 3 },
+  },
+
   /** 10. Edge cases */
   limits: {
     /** Songs shorter than this (seconds) get no suggestions. */

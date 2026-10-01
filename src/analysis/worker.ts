@@ -24,6 +24,9 @@ scope.onmessage = (ev) => {
       if (!session) throw new Error('No analysis session');
       const analysis = session.update(msg.change, report);
       scope.postMessage({ type: 'result', id: msg.id, analysis });
+    } else if (msg.type === 'seamReport') {
+      if (!session) throw new Error('No analysis session');
+      scope.postMessage({ type: 'seamReport', id: msg.id, reports: session.seamReport(msg.regions) });
     }
   } catch (err) {
     scope.postMessage({ type: 'error', id: msg.id, message: err instanceof Error ? err.message : String(err) });

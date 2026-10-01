@@ -1,18 +1,19 @@
 import { barBeatIndices, downbeatEvidence, pickBarPhase } from './bars';
 import { correctBeatPhase, prependStartBeats, refineBeatTimes, tempoFromBeats, trackBeatFrames } from './beats';
 import type { FineOnset } from './beats';
-import { findCandidates } from './candidates';
+import { contextMatch, findCandidates } from './candidates';
 import { ANALYSIS_CONFIG } from './config';
 import { beatSyncFeatures, computeFineOnset, computeFrameData } from './features';
 import type { BeatFeatures, FrameData } from './features';
 import { buildHarmonyModel, chromaSimilarity } from './harmony';
 import type { ChromaSimilarity, HarmonyModel } from './harmony';
+import { SeamAnalyzer, chipFor, nearestBeat } from './seam';
 import { findSections } from './sections';
 import { selfSimilarity } from './ssm';
 import type { SelfSimilarity } from './ssm';
 import { estimateTempo } from './tempo';
 import type { TempoResult } from './tempo';
-import type { Analysis, AnalysisStage, AnalysisUpdate, LoopCandidate, Section } from './types';
+import type { Analysis, AnalysisStage, AnalysisUpdate, LoopCandidate, Section, SeamReport, SeamRequest } from './types';
 
 export type ProgressFn = (stage: AnalysisStage, pct: number) => void;
 
@@ -46,6 +47,7 @@ export class AnalysisSession {
   private harmonyModel: HarmonyModel | null = null;
   private sections: Section[] = [];
   private candidates: LoopCandidate[] = [];
+  private seamAnalyzer: SeamAnalyzer | null = null;
 
   constructor(
     private samples: Float32Array,
@@ -58,6 +60,7 @@ export class AnalysisSession {
 
   /** Full analysis. */
   run(beatsPerBar: number, progress: ProgressFn = () => undefined): Analysis {
+    this.seamAnalyzer = null;
     this.beatsPerBar = beatsPerBar;
     this.phaseShift = 0;
     this.bpmOverride = null;
@@ -76,6 +79,7 @@ export class AnalysisSession {
 
   /** Re-run from the changed stage onward using cached data. */
   update(change: AnalysisUpdate, progress: ProgressFn = () => undefined): Analysis {
+    this.seamAnalyzer = null;
     if (this.silent || !this.frameData) return this.assemble();
     let rebeat = false;
     let rebar = false;
@@ -134,6 +138,78 @@ export class AnalysisSession {
     }
     const evidence = downbeatEvidence(this.beatTimes, fd.onset, fd.lowEnergy, fd.frameRate);
     this.autoPhase = pickBarPhase(evidence, this.beatsPerBar).phase;
+  }
+
+  /** A steady beat was found (so beats, bars and the harmonic model mean something). */
+  private hasSteadyBeat(): boolean {
+    const lim = ANALYSIS_CONFIG.limits;
+    return (
+      !this.silent &&
+      this.beatTimes.length >= lim.minBeats &&
+      (this.tempo?.confidence ?? 0) >= ANALYSIS_CONFIG.tempo.minConfidence
+    );
+  }
+
+  /**
+   * Features, similarity matrix and harmonic model for the seam analysis. Songs that are too short for
+   * suggestions skip them in `run`, but a hand-made loop in such a song still gets a seam report.
+   */
+  private ensureSeamData(): void {
+    const lim = ANALYSIS_CONFIG.limits;
+    if (this.silent || !this.frameData || this.beatTimes.length < lim.minBeats) return;
+    if (!this.features) {
+      this.features = beatSyncFeatures(this.frameData, this.beatTimes);
+      this.chromaSim = chromaSimilarity(this.features.chroma, this.features.beats, this.features.chromaDims);
+      this.ssm = selfSimilarity(this.features.combined, this.features.beats, this.features.dims, ANALYSIS_CONFIG.ssm.delay);
+    }
+    if (!this.harmonyModel && this.chromaSim) this.harmonyModel = buildHarmonyModel(this.chromaSim, this.beatsPerBar);
+  }
+
+  /** The seam analysis of the current beats (null for silent audio). */
+  seamAnalysis(): SeamAnalyzer | null {
+    if (this.seamAnalyzer) return this.seamAnalyzer;
+    if (this.silent || !this.frameData || !this.fine) return null;
+    this.ensureSeamData();
+    this.seamAnalyzer = new SeamAnalyzer({
+      duration: this.duration,
+      frames: this.frameData,
+      fine: this.fine,
+      beats: this.beatTimes,
+      beatsPerBar: this.beatsPerBar,
+      barPhase: this.barPhase(),
+      hasGrid: this.hasSteadyBeat(),
+      harmony: this.hasSteadyBeat() ? this.harmonyModel : null,
+    });
+    return this.seamAnalyzer;
+  }
+
+  /**
+   * Report on the seams of some loops (SPEC-seams.md 2 and 3.5): harmony, context match, the three seam scores
+   * and the Clean / OK / Rough chip. Returns an empty list when nothing was analysed (silent audio).
+   */
+  seamReport(requests: SeamRequest[]): SeamReport[] {
+    const tool = this.seamAnalysis();
+    if (!tool) return [];
+    const ssm = this.ssm;
+    return requests.map((req) => {
+      const scores = tool.scores(req.start, req.end);
+      let context: number | null = null;
+      if (tool.hasGrid && ssm) {
+        const a = nearestBeat(this.beatTimes, req.start);
+        const b = nearestBeat(this.beatTimes, req.end);
+        if (b > a) context = contextMatch(ssm, a, b);
+      }
+      return {
+        id: req.id,
+        start: req.start,
+        end: req.end,
+        hasGrid: tool.hasGrid,
+        harmony: scores.harmony,
+        contextMatch: context,
+        scores,
+        chip: chipFor(scores.quality),
+      };
+    });
   }
 
   /** Whether suggestions are computed at all for this song. */

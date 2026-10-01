@@ -1,7 +1,7 @@
 import type { Page } from '@playwright/test';
 import { encodeWavBytes } from '../../src/audio/wav';
-import type { SynthSongOptions } from '../fixtures/synth';
-import { clickTrack, synthSong } from '../fixtures/synth';
+import type { ChordSongOptions, SynthSong, SynthSongOptions } from '../fixtures/synth';
+import { chordSong, clickTrack, synthSong } from '../fixtures/synth';
 
 export interface Fixture {
   name: string;
@@ -25,6 +25,32 @@ export async function makeFixture(
     buffer: Buffer.from(bytes),
     duration: song.duration,
     sampleRate: song.sampleRate,
+  };
+}
+
+export interface ChordFixture extends Fixture {
+  /** The true sections of the synthesised song (seconds). */
+  sections: SynthSong['sections'];
+  /** The chord of each bar. */
+  chords: string[];
+}
+
+/** A WAV fixture from named chord progressions (see tests/fixtures/synth.ts chordSong), stereo at 44.1 kHz. */
+export async function makeChordFixture(
+  options: Pick<ChordSongOptions, 'progressions' | 'structure'> & Partial<ChordSongOptions>,
+  name = 'chords.wav',
+): Promise<ChordFixture> {
+  const song = chordSong({ sampleRate: 44100, ...options });
+  const right = Float32Array.from(song.samples, (v) => v * 0.9);
+  const bytes = await encodeWavBytes([song.samples, right], song.sampleRate, { bitDepth: 16, dither: false });
+  return {
+    name,
+    mimeType: 'audio/wav',
+    buffer: Buffer.from(bytes),
+    duration: song.duration,
+    sampleRate: song.sampleRate,
+    sections: song.sections,
+    chords: song.chords,
   };
 }
 

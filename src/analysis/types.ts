@@ -71,3 +71,39 @@ export interface AnalysisUpdate {
   /** Force the beat tracker to this tempo (BPM); null returns to automatic. */
   bpm?: number | null;
 }
+
+/** What a seam sounds like, each in [0, 1] (SPEC-seams.md 3.1 and 3.5). */
+export interface SeamScores {
+  /** Does the seam land right before a strong hit? */
+  transient: number;
+  /** How close is the spectrum across the seam to the song's own typical change at that bar position? */
+  spectral: number;
+  /** Does the song itself make this chord change? null when there is no beat grid to ask. */
+  harmony: number | null;
+  /** The combination of the three, with harmony weighted up to 0.5. */
+  quality: number;
+}
+
+export type SeamChip = 'clean' | 'ok' | 'rough';
+
+/** One loop (or suggestion) to report on. Times are seconds on the original song. */
+export interface SeamRequest {
+  id: string;
+  start: number;
+  end: number;
+}
+
+export interface SeamReport {
+  id: string;
+  /** The points the report was computed for (the app ignores it if the loop has moved since). */
+  start: number;
+  end: number;
+  /** Is there a beat grid (so harmony and bar positions mean something)? */
+  hasGrid: boolean;
+  /** Harmony of the seam, or null without a beat grid. */
+  harmony: number | null;
+  /** Context match of the two edges (SPEC-seams.md 6), or null without a beat grid. */
+  contextMatch: number | null;
+  scores: SeamScores;
+  chip: SeamChip;
+}

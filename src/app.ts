@@ -1,6 +1,6 @@
 import { AnalysisClient, AnalysisSupersededError } from './analysis/client';
 import { ANALYSIS_CONFIG } from './analysis/config';
-import type { Analysis, AnalysisStage, AnalysisUpdate } from './analysis/types';
+import type { Analysis, AnalysisStage, AnalysisUpdate, SeamReport } from './analysis/types';
 import { RENDER_CONFIG } from './audio/config';
 import { computePeaks, decodeFile, toMonoAnalysisRate } from './audio/decode';
 import type { DecodedSong } from './audio/decode';
@@ -65,6 +65,13 @@ export interface AppState {
   lengthMode: LengthMode;
   /** Target extended length in seconds (used in target mode). */
   targetSeconds: number;
+  /** Seam reports of the loops (harmony, scores, chip) by region id, as the analysis worker last delivered them. */
+  seams: Record<string, SeamReport>;
+}
+
+/** Identifies the points a seam report belongs to (the report is ignored once the loop has moved). */
+function seamKey(r: { start: number; end: number }): string {
+  return `${r.start.toFixed(6)}|${r.end.toFixed(6)}`;
 }
 
 /** Overall analysis progress (0..1) from a stage and the progress within it. */
@@ -110,6 +117,7 @@ export class App {
     candidateLabels: [],
     lengthMode: 'repeats',
     targetSeconds: 0,
+    seams: {},
   });
   readonly player = new Player();
   private renderClient = new RenderClient();
@@ -135,6 +143,9 @@ export class App {
   private extendedKey: string | null = null;
   private timeline = buildTimeline({ regions: [] }, 0);
   private aux: AuxInfo | null = null;
+  private seamTimer = 0;
+  /** Points of each loop that a seam report was last requested for (by region id). */
+  private seamKeys = new Map<string, string>();
 
   constructor(private root: HTMLElement) {
     this.dropzone = new Dropzone((f) => void this.loadFile(f));
@@ -261,15 +272,21 @@ export class App {
       s.previewingId !== prev.previewingId ||
       s.song !== prev.song ||
       s.grid !== prev.grid ||
-      s.lengthMode !== prev.lengthMode
+      s.lengthMode !== prev.lengthMode ||
+      s.seams !== prev.seams
     ) {
       this.regionsPanel.update(s.regions, s.selectedId, {
         barsOf: (r) => barsBetween(s.grid, r.start, r.end),
         hasGrid: s.grid.beats.length > 0,
         previewingId: s.previewingId,
         repeatsLocked: s.lengthMode === 'target',
+        seamOf: (r) => {
+          const report = s.seams[r.id];
+          return report && seamKey(report) === seamKey(r) ? report : null;
+        },
       });
     }
+    if (regionsChanged || s.analysis !== prev.analysis || s.analysisState !== prev.analysisState) this.scheduleSeamReports();
     if (s.grid !== prev.grid || s.analysis !== prev.analysis) {
       this.waveform?.setGrid(
         s.grid.display ? { beats: s.grid.beats, bars: s.grid.bars } : null,
@@ -455,7 +472,9 @@ export class App {
       grid: emptyGrid(),
       lengthMode: 'repeats',
       targetSeconds: Math.ceil(song.duration),
+      seams: {},
     });
+    this.seamKeys.clear();
     this.dropzone.showFile(song);
     this.dropzone.showWarning(
       song.duration > ANALYSIS_CONFIG.limits.longSongSeconds
@@ -499,7 +518,8 @@ export class App {
   private async startAnalysis(song: DecodedSong): Promise<void> {
     const token = this.loadToken;
     this.analysisClient.cancel();
-    this.store.set({ analysisState: 'running', analysis: null, grid: emptyGrid() });
+    this.store.set({ analysisState: 'running', analysis: null, grid: emptyGrid(), seams: {} });
+    this.seamKeys.clear();
     this.dropzone.showProgress('Finding beats\u2026', 0);
     try {
       const samples = await toMonoAnalysisRate(song.buffer);
@@ -526,7 +546,8 @@ export class App {
   private applyAnalysis(analysis: Analysis): void {
     const song = this.store.get().song;
     if (!song) return;
-    this.store.set({ analysis, analysisState: 'done', grid: makeGrid(analysis, song.duration), candidateLabels: [] });
+    this.seamKeys.clear();
+    this.store.set({ analysis, analysisState: 'done', grid: makeGrid(analysis, song.duration), candidateLabels: [], seams: {} });
     // Optional labeller (no-op by default); a failure only means "no labels".
     const token = this.loadToken;
     this.labelProvider
@@ -552,6 +573,46 @@ export class App {
       this.notify(`Analysis failed: ${err instanceof Error ? err.message : String(err)}`);
     } finally {
       if (token === this.loadToken) this.dropzone.hideProgress();
+    }
+  }
+
+  // ---- seam reports ------------------------------------------------------------
+
+  /** Ask the analysis worker how the loops' seams sound, shortly after the loops or the analysis change. */
+  private scheduleSeamReports(): void {
+    window.clearTimeout(this.seamTimer);
+    this.seamTimer = window.setTimeout(() => void this.runSeamReports(), 120);
+  }
+
+  private async runSeamReports(): Promise<void> {
+    const { regions, analysis, analysisState, seams } = this.store.get();
+    // forget reports of loops that are gone
+    const ids = new Set(regions.map((r) => r.id));
+    for (const id of [...this.seamKeys.keys()]) if (!ids.has(id)) this.seamKeys.delete(id);
+    if (Object.keys(seams).some((id) => !ids.has(id))) {
+      this.store.set({ seams: Object.fromEntries(Object.entries(seams).filter(([id]) => ids.has(id))) });
+    }
+    if (!analysis || analysis.silent || analysisState === 'running' || regions.length === 0) return;
+    const stale = regions.filter((r) => this.seamKeys.get(r.id) !== seamKey(r));
+    if (stale.length === 0) return;
+    for (const r of stale) this.seamKeys.set(r.id, seamKey(r));
+    const token = this.loadToken;
+    try {
+      const reports = await this.analysisClient.seamReport(
+        regions.map((r) => ({ id: r.id, start: r.start, end: r.end })),
+      );
+      if (token !== this.loadToken) return;
+      const now = this.store.get();
+      const next = { ...now.seams };
+      for (const report of reports) {
+        const region = now.regions.find((r) => r.id === report.id);
+        if (region && seamKey(region) === seamKey(report)) next[report.id] = report;
+      }
+      this.store.set({ seams: next });
+    } catch (err) {
+      if (err instanceof AnalysisSupersededError) return;
+      // A failed report only means there is no chip.
+      for (const r of stale) this.seamKeys.delete(r.id);
     }
   }
 
