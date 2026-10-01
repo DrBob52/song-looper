@@ -17,6 +17,8 @@ export interface RegionsPanelCallbacks {
   /** Play the raw seam (the loop as the user set it, no smoothing, no bridge) for A/B comparison. */
   onAuditionOriginal(id: string): void;
   onSmoothToggle(id: string, on: boolean): void;
+  /** Bridge (SPEC-seams.md 5): play 1 to 4 bars of the song after the loop end, then jump back where its chord change occurs. */
+  onBridgeToggle(id: string, on: boolean): void;
   /** Restore the original seam and turn smoothing off for the loop. */
   onUndoSeam(id: string): void;
   /** Hear the seam of the nearby loop with a cleaner chord change. */
@@ -39,6 +41,8 @@ export interface RegionsPanelInfo {
   seamOf(region: LoopRegion): SeamReport | null;
   /** A loop nearby with a cleaner chord change, if the seam report found one. */
   nearbyOf(region: LoopRegion): NearbyLoop | null;
+  /** The outcome of the bridge search for a loop (null: no report for the current switches yet). */
+  bridgeOf(region: LoopRegion): SeamReport['bridge'];
 }
 
 interface Row {
@@ -60,6 +64,9 @@ interface Row {
   undo: HTMLButtonElement;
   nearby: HTMLElement;
   nearbyText: HTMLElement;
+  bridge: HTMLInputElement;
+  bridgeStatus: HTMLElement;
+  bridgeHint: HTMLElement;
 }
 
 /** The user's loop regions, each with its own repeat count. Rows are updated in place (keyed by id). */
@@ -142,6 +149,23 @@ export class RegionsPanel {
       const plan = currentSeam(region);
       row.summary.hidden = !(smooth && plan);
       if (smooth && plan) row.summaryText.textContent = seamSummary(plan);
+      row.bridge.checked = region.bridge === true;
+      const bridgeInfo = currentSeam(region)?.bridge ?? null;
+      const outcome = info.bridgeOf(region);
+      row.bridgeStatus.hidden = region.bridge !== true;
+      if (region.bridge === true) {
+        row.bridgeStatus.textContent =
+          bridgeInfo && region.seam
+            ? `Bridge: ${formatBars(bridgeInfo.bars)} from ${formatTime(bridgeInfo.from, 1)}, back at ${formatTime(bridgeInfo.chordChangeAt, 1)} (chord change found there)`
+            : outcome === 'none'
+              ? 'No natural bridge found'
+              : outcome === 'unneeded'
+                ? 'No bridge needed: the chord change back to the start is already natural'
+                : 'Looking for a bridge\u2026';
+        row.bridgeStatus.dataset.state = bridgeInfo && region.seam ? 'found' : (outcome ?? 'pending');
+      }
+      // the hint of last resort: a Rough seam that has not tried a bridge yet
+      row.bridgeHint.hidden = !(report && report.chip === 'rough' && region.bridge !== true);
       const nearby = info.nearbyOf(region);
       row.nearby.hidden = !nearby;
       if (nearby) {
@@ -218,6 +242,14 @@ export class RegionsPanel {
       on: { click: () => this.cb.onUndoSeam(id) },
     });
     const summary = h('div', { class: 'seam-summary small', attrs: { hidden: true } }, [summaryText, undo]);
+    const bridge = h('input', {
+      attrs: { type: 'checkbox', 'data-testid': 'bridge-toggle' },
+      on: { change: () => this.cb.onBridgeToggle(id, bridge.checked) },
+    });
+    const bridgeStatus = h('div', { class: 'bridge-status small', attrs: { hidden: true, 'data-testid': 'bridge-status' } });
+    const bridgeHint = h('div', { class: 'bridge-hint small', attrs: { hidden: true, 'data-testid': 'bridge-hint' } }, [
+      'Seam sounds rough? Try Bridge',
+    ]);
     const nearbyText = h('span', { attrs: { 'data-testid': 'nearby-text' } });
     const nearby = h('div', { class: 'nearby small', attrs: { hidden: true, 'data-testid': 'nearby' } }, [
       nearbyText,
@@ -277,6 +309,14 @@ export class RegionsPanel {
               smooth,
               h('span', { text: 'Smooth seam' }),
             ]),
+            h(
+              'label',
+              {
+                class: 'field',
+                attrs: { title: 'Play 1 to 4 bars of the song after the loop end, then jump back from where its chord change occurs' },
+              },
+              [bridge, h('span', { text: 'Bridge' })],
+            ),
             h('span', { class: 'spacer' }),
             loopBtn,
             seamBtn,
@@ -284,11 +324,13 @@ export class RegionsPanel {
             removeBtn,
           ]),
           summary,
+          bridgeStatus,
+          bridgeHint,
           nearby,
         ]),
       ],
     );
-    return { el, swatch, title, times, meta, repeats, dec, inc, snap, loopBtn, seam, chip, smooth, summary, summaryText, undo, nearby, nearbyText };
+    return { el, swatch, title, times, meta, repeats, dec, inc, snap, loopBtn, seam, chip, smooth, summary, summaryText, undo, nearby, nearbyText, bridge, bridgeStatus, bridgeHint };
   }
 }
 

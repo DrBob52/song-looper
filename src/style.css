@@ -795,6 +795,26 @@ input[aria-invalid='true'] {
   box-shadow: inset 1px 0 0 rgba(255, 255, 255, 0.5);
 }
 
+.tl-block.bridge {
+  background-color: var(--panel-2);
+  background-image: repeating-linear-gradient(
+    135deg,
+    var(--loop-color, var(--accent)) 0 3px,
+    transparent 3px 7px
+  );
+  box-shadow: inset 1px 0 0 rgba(255, 255, 255, 0.5);
+}
+
+.bridge-status,
+.bridge-hint {
+  color: var(--muted);
+}
+
+.bridge-status[hidden],
+.bridge-hint[hidden] {
+  display: none;
+}
+
 .tl-head {
   position: absolute;
   top: -3px;

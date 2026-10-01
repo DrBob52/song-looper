@@ -28,7 +28,7 @@ export interface BridgeInfo {
   bars: number;
   /** Seconds those bars add to every repeat but the last. */
   seconds: number;
-  /** Where the bridge's audio is taken from: the start of its first piece and of the last piece that leads back. */
+  /** Where the bridge begins in the song: the loop's end. */
   from: number;
   /** Time in the song at which the song itself makes the chord change that leads back to the loop start. */
   chordChangeAt: number;

@@ -98,6 +98,8 @@ export interface SeamRequest {
   /** The loop's edges may move within [minStart, maxEnd] (the free space around it). Default: the whole song. */
   minStart?: number;
   maxEnd?: number;
+  /** Look for a bridge (SPEC-seams.md 5): 1 to 4 bars played after the loop end before jumping back. Default off. */
+  bridge?: boolean;
 }
 
 /** A loop near the user's with a cleaner chord change at its seam (SPEC-seams.md 4). Only ever suggested. */
@@ -133,4 +135,9 @@ export interface SeamReport {
   plan: SeamPlan | null;
   /** A nearby loop with a cleaner chord change, when this loop's harmony is poor and one exists. */
   nearby: NearbyLoop | null;
+  /**
+   * The outcome of a bridge search: `found` (the plan plays it), `none` (no natural way back within the limits) or
+   * `unneeded` (the direct seam already is about as good as a bridge could make it). Null when none was asked for.
+   */
+  bridge: 'found' | 'none' | 'unneeded' | null;
 }

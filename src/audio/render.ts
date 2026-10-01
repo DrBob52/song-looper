@@ -310,8 +310,6 @@ export function regionsToSamples(
     if (end <= start) continue;
     // the jump back to the loop start lands exactly on the loop start
     jumps[jumps.length - 1]!.to = start;
-    // A plain loop leaves from its own end.
-    if (jumps.length === 1) jumps[0]!.from = end;
     const pieces = jumps.map((j, k) => ({ start: k === 0 ? start : jumps[k - 1]!.to, end: j.from }));
     if (pieces.some((p) => p.end <= p.start)) {
       // a degenerate plan: fall back to the plain loop

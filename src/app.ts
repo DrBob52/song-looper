@@ -79,7 +79,7 @@ function seamKey(r: { start: number; end: number }): string {
 /** Identifies everything a seam request depends on: the points, the smoothing switch and the room to move. */
 function requestKey(q: SeamRequest): string {
   const f = (v: number | undefined): string => (v === undefined ? '' : v.toFixed(6));
-  return [f(q.start), f(q.end), q.smooth === false ? 'raw' : 'smooth', f(q.minStart), f(q.maxEnd)].join('|');
+  return [f(q.start), f(q.end), q.smooth === false ? 'raw' : 'smooth', q.bridge ? 'bridge' : 'direct', f(q.minStart), f(q.maxEnd)].join('|');
 }
 
 /** Overall analysis progress (0..1) from a stage and the progress within it. */
@@ -184,6 +184,7 @@ export class App {
       onAuditionOriginal: (id) => void this.auditionSeam(id, true),
       onSmoothToggle: (id, on) => this.setSmooth(id, on),
       onUndoSeam: (id) => this.undoSeam(id),
+      onBridgeToggle: (id, on) => this.setBridge(id, on),
       onNearbyAudition: (id) => void this.auditionNearby(id),
       onNearbyUse: (id) => this.useNearby(id),
       onRemove: (id) => this.removeRegion(id),
@@ -304,6 +305,10 @@ export class App {
         nearbyOf: (r) => {
           const report = s.seams[r.id];
           return report && seamKey(report) === seamKey(r) ? report.nearby : null;
+        },
+        bridgeOf: (r) => {
+          const report = s.seams[r.id];
+          return report && seamKey(report) === seamKey(r) ? report.bridge : null;
         },
       });
     }
@@ -602,7 +607,7 @@ export class App {
 
   private requestFor(r: LoopRegion, regions: readonly LoopRegion[], duration: number): SeamRequest {
     const room = neighbourBounds(regions, r.id, duration);
-    return { id: r.id, start: r.start, end: r.end, smooth: isSmooth(r), minStart: room.start, maxEnd: room.end };
+    return { id: r.id, start: r.start, end: r.end, smooth: isSmooth(r), bridge: r.bridge === true, minStart: room.start, maxEnd: room.end };
   }
 
   /** Does any loop need a (new) seam report? */
@@ -670,7 +675,7 @@ export class App {
       const report = reports.find((x) => x.id === r.id);
       if (!report || sent.get(r.id) !== requestKey(this.requestFor(r, now.regions, now.song!.duration))) return r;
       seams[r.id] = report;
-      const next = report.plan && isSmooth(r) ? withSeamPlan(r, report.plan) : r;
+      const next = report.plan && (isSmooth(r) || r.bridge === true) ? withSeamPlan(r, report.plan) : r;
       if (next !== r) regionsChanged = true;
       return next;
     });
@@ -863,6 +868,11 @@ export class App {
     const nearby = this.nearbyOf(id);
     if (!nearby) return;
     this.updateRegion(id, { start: nearby.start, end: nearby.end });
+  }
+
+  /** The Bridge toggle of a loop (SPEC-seams.md 5; off by default). */
+  setBridge(id: string, on: boolean): void {
+    this.updateRegion(id, { bridge: on });
   }
 
   /** Undo (SPEC-seams.md 3.5): the loop plays exactly as its points say, and smoothing stays off for it. */

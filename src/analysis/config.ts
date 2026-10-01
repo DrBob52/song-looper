@@ -255,6 +255,16 @@ export const ANALYSIS_CONFIG = {
   },
 
   /**
+   * SPEC-seams.md 5: the bridge is a shortest path on a beat graph from the loop's last beat back to its first. The
+   * path plays `minBars` to `maxBars` whole bars beyond the loop and jumps at most `maxJumps` times; every jump needs
+   * harmony of at least `minHarmony` and to land on the same position in the bar as the beat it replaces. It is only
+   * offered when its worst jump beats the direct seam's harmony by `minGain`. Among paths, the cost is the sum of
+   * (1 - harmony) over the jumps plus `jumpPenalty` for each jump beyond the first and `barPenalty` for each bar, so
+   * that the song's own continuation wins unless a detour is clearly better.
+   */
+  bridge: { minBars: 1, maxBars: 4, maxJumps: 2, minHarmony: 0.5, minGain: 0.2, jumpPenalty: 0.1, barPenalty: 0.01 },
+
+  /**
    * SPEC-seams.md 4: when a loop's harmony is under `under`, look for a loop whose start is within `startBars` bars of
    * its start and whose end is within `endBars` bars of its end, a whole number of bars long, with the best harmony
    * (the candidate score breaks ties between harmonies within `tie` of each other). It is only offered when its

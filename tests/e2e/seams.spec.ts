@@ -4,6 +4,13 @@ import type { Page } from '@playwright/test';
 import { SONG1 } from '../fixtures/synth';
 import { appState, loadFixture, makeChordFixture, parseWav, waitForAnalysis } from './helpers';
 
+/** The extended length shown in the length panel, in seconds (it shows whole seconds). */
+async function shownLength(page: Page): Promise<number> {
+  const text = (await page.getByTestId('length-extended').textContent()) ?? '';
+  const [m, sec] = text.trim().split(':').map(Number);
+  return m! * 60 + sec!;
+}
+
 /** Add a loop on a span of the song through the app (as the Add button would). */
 async function addLoop(page: Page, start: number, end: number): Promise<void> {
   await page.evaluate(
@@ -158,4 +165,103 @@ test('a loop with a poor chord change is offered a cleaner one nearby: Audition 
   await expect(page.getByTestId('seam-chip').first()).not.toHaveText('Rough');
   await expect(page.getByTestId('nearby').first()).toBeHidden();
   expect(errors).toEqual([]);
+});
+
+test('bridge: opt-in per loop; the chip improves, the timeline strip hatches it, the export matches the timeline', async ({ page }) => {
+  const errors: string[] = [];
+  page.on('pageerror', (e) => errors.push(e.message));
+  const fixture = await makeChordFixture(SONG1, 'song1.wav');
+  await loadFixture(page, fixture);
+  await waitForAnalysis(page);
+  const [a] = fixture.sections;
+
+  await addLoop(page, a!.start, a!.end);
+  const chip = page.getByTestId('seam-chip').first();
+  await expect(chip).toHaveText('Rough');
+  // off by default, with a hint on a rough seam
+  await expect(page.getByTestId('bridge-toggle').first()).not.toBeChecked();
+  await expect(page.getByTestId('bridge-hint').first()).toBeVisible();
+  await expect(page.getByTestId('bridge-hint').first()).toHaveText('Seam sounds rough? Try Bridge');
+  await expect(page.getByTestId('bridge-status').first()).toBeHidden();
+  expect(await page.locator('.tl-block.bridge').count()).toBe(0);
+  const repeatsInput = page.getByTestId('repeats').first();
+  await repeatsInput.fill('3');
+  await repeatsInput.press('Enter');
+  const plainExpected = fixture.duration + 2 * (a!.end - a!.start);
+  // (the panel shows whole seconds)
+  await expect.poll(async () => Math.abs((await shownLength(page)) - plainExpected)).toBeLessThanOrEqual(0.51);
+
+  // turn the bridge on: 4 bars of the song's own B section, then back where G -> C is
+  await page.getByTestId('bridge-toggle').first().check();
+  const status = page.getByTestId('bridge-status').first();
+  await expect(status).toHaveText(/^Bridge: 4 bars from 0:08\.\d, back at 0:16\.\d \(chord change found there\)$/);
+  await expect(chip).not.toHaveText('Rough');
+  await expect(page.getByTestId('bridge-hint').first()).toBeHidden();
+
+  // the timeline strip: a hatched block after every repeat but the last, and the extended length counts the bridges
+  const region = (await appState<{ seam: { loopStart: number; loopEnd: number; bridge: { seconds: number; bars: number } } }[]>(page, 's.regions'))[0]!;
+  expect(region.seam.bridge.bars).toBe(4);
+  await expect(page.locator('.tl-block.bridge')).toHaveCount(2);
+  expect(await page.locator('.tl-block.repeat').count()).toBe(3);
+  const expected = fixture.duration + 2 * (region.seam.loopEnd - region.seam.loopStart + region.seam.bridge.seconds);
+  await expect.poll(async () => Math.abs((await shownLength(page)) - expected)).toBeLessThanOrEqual(0.51);
+
+  // the audition and the loop preview play the bridge
+  await page.getByTestId('audition-seam').first().click();
+  await expect(page.getByTestId('play')).toHaveText('Pause');
+  await page.getByTestId('play').click();
+  await expect(page.getByTestId('play')).toHaveText('Play');
+  await page.getByTestId('loop-preview').first().click();
+  await expect(page.getByTestId('loop-preview').first()).toHaveText('Stop');
+  await page.getByTestId('loop-preview').first().click();
+  await expect(page.getByTestId('loop-preview').first()).toHaveText('Loop');
+
+  // export: the WAV is as long as the timeline says
+  await page.getByTestId('export').click();
+  const [download] = await Promise.all([page.waitForEvent('download'), page.getByTestId('export-confirm').click()]);
+  const wav = readFileSync(await download.path());
+  expect(Math.abs(parseWav(wav).duration - expected)).toBeLessThan(0.02);
+
+  // and switching it off puts everything back
+  await page.getByTestId('bridge-toggle').first().uncheck();
+  await expect(page.locator('.tl-block.bridge')).toHaveCount(0);
+  await expect(page.getByTestId('bridge-status').first()).toBeHidden();
+  await expect(chip).toHaveText('Rough');
+  expect(errors).toEqual([]);
+});
+
+test('bridge: a loop whose seam is already natural says no bridge is needed', async ({ page }) => {
+  const fixture = await makeChordFixture(SONG1, 'song1.wav');
+  await loadFixture(page, fixture);
+  await waitForAnalysis(page);
+  const [a, b] = fixture.sections;
+  await addLoop(page, a!.start, b!.end);
+  await expect(page.getByTestId('seam-chip').first()).not.toHaveText('Rough');
+  await expect(page.getByTestId('bridge-hint').first()).toBeHidden();
+  await page.getByTestId('bridge-toggle').first().check();
+  await expect(page.getByTestId('bridge-status').first()).toHaveText(/No bridge needed/);
+  await expect(page.locator('.tl-block.bridge')).toHaveCount(0);
+});
+
+test('bridge: target-length mode counts the bridge when it picks repeat counts', async ({ page }) => {
+  const fixture = await makeChordFixture(SONG1, 'song1.wav');
+  await loadFixture(page, fixture);
+  await waitForAnalysis(page);
+  const [a] = fixture.sections;
+  await addLoop(page, a!.start, a!.end);
+  await page.getByTestId('bridge-toggle').first().check();
+  await expect(page.getByTestId('bridge-status').first()).toHaveText(/^Bridge: 4 bars/);
+
+  await page.getByTestId('length-mode-target').check();
+  await page.getByTestId('target-input').fill('2:00');
+  await page.getByTestId('target-input').press('Enter');
+  await expect(page.getByTestId('length-note')).toContainText('Closest whole repeats');
+  const r = (await appState<{ repeats: number; seam: { loopStart: number; loopEnd: number; bridge: { seconds: number } } }[]>(page, 's.regions'))[0]!;
+  const cycle = r.seam.loopEnd - r.seam.loopStart + r.seam.bridge.seconds;
+  const total = fixture.duration + (r.repeats - 1) * cycle;
+  // within half a (loop + bridge) of the target, as the solver promises
+  expect(Math.abs(total - 120)).toBeLessThanOrEqual(cycle / 2 + 0.05);
+  // a plain loop would need more repeats for the same time
+  expect(r.repeats).toBeLessThan(1 + Math.round((120 - fixture.duration) / (a!.end - a!.start)));
+  await expect.poll(async () => Math.abs((await shownLength(page)) - total)).toBeLessThanOrEqual(0.51);
 });

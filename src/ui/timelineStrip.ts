@@ -56,7 +56,13 @@ export class TimelineStrip {
     for (const seg of segments) {
       const pct = ((seg.outEnd - seg.outStart) / this.total) * 100;
       const block = h('div', { class: 'tl-block', style: { width: `${pct}%` } });
-      if (seg.kind === 'repeat' && seg.regionId) {
+      if (seg.kind === 'bridge' && seg.regionId) {
+        // a bridge: song audio that follows the loop on a repeat, shown hatched in the loop's colour
+        const info = byId.get(seg.regionId);
+        block.classList.add('bridge');
+        block.style.setProperty('--loop-color', info?.region.color ?? 'var(--accent)');
+        block.title = `Loop ${(info?.index ?? 0) + 1} bridge after play ${seg.repeat} (${formatTime(seg.start, 1)} \u2013 ${formatTime(seg.end, 1)})`;
+      } else if (seg.kind === 'repeat' && seg.regionId) {
         const info = byId.get(seg.regionId);
         block.classList.add('repeat');
         block.style.background = info?.region.color ?? 'var(--accent)';

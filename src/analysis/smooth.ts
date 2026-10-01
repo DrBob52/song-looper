@@ -52,25 +52,29 @@ export interface Rotation {
  */
 export function chooseRotation(
   tool: SeamAnalyzer,
-  start: number,
-  end: number,
+  /** The jumps of the loop's cycle (a plain loop has one: its end back to its start); each is `from` -> `to` in seconds. */
+  jumps: readonly { from: number; to: number }[],
   lo: number,
   hi: number,
   cfg: SmoothConfig = ANALYSIS_CONFIG.seam,
 ): Rotation {
   const rc = cfg.rotation;
-  const beat = localBeatSeconds(tool, start);
-  /** `sharp`: the transient term is the cover (a hit just ahead); otherwise it is the tolerant "a hit is near". */
+  const beat = localBeatSeconds(tool, jumps[jumps.length - 1]!.to);
+  /** `sharp`: the transient term is the cover (a hit just ahead); otherwise it is the tolerant "a hit is near". Averaged over the jumps. */
   const score = (d: number, sharp: boolean): number => {
-    const s = start + d;
-    const e = end + d;
-    const t = sharp ? tool.transientCover(s) : tool.transientNear(s);
-    const sp = tool.spectralContinuity(e, s);
-    const h = tool.harmonyAt(e, s);
     const w = rc.weights;
-    const sum = w.transient * t + w.spectral * sp + (h === null ? 0 : w.harmony * h);
-    const weight = w.transient + w.spectral + (h === null ? 0 : w.harmony);
-    return sum / weight - rc.movePenalty * (Math.abs(d) / beat);
+    let total = 0;
+    for (const j of jumps) {
+      const s = j.to + d;
+      const e = j.from + d;
+      const t = sharp ? tool.transientCover(s) : tool.transientNear(s);
+      const sp = tool.spectralContinuity(e, s);
+      const h = tool.harmonyAt(e, s);
+      const sum = w.transient * t + w.spectral * sp + (h === null ? 0 : w.harmony * h);
+      const weight = w.transient + w.spectral + (h === null ? 0 : w.harmony);
+      total += sum / weight;
+    }
+    return total / jumps.length - rc.movePenalty * (Math.abs(d) / beat);
   };
   const baseScore = score(0, true);
   if (!tool.hasGrid || hi - lo < 1e-4) return { shift: 0, score: baseScore, baseScore };
@@ -376,6 +380,67 @@ export interface SmoothInput {
   maxEnd?: number;
 }
 
+/** A jump before smoothing: `from` is the end of the stretch played before it, `to` where playing resumes (seconds). */
+export interface JumpSeed {
+  from: number;
+  to: number;
+}
+
+export interface SmoothedJumps {
+  shift: number;
+  /** What each jump's departure moved by (micro-alignment). */
+  aligns: number[];
+  jumps: SeamPlan['jumps'];
+  harmonies: (number | null)[];
+}
+
+/**
+ * Smooth the jumps of a loop's cycle (SPEC-seams.md 3): one rotation shared by all of them, then for each jump the
+ * alignment of its departure point, the fade and the level ramp. With `smooth` off the jumps are only expressed
+ * as they are.
+ */
+export function smoothJumps(
+  tool: SeamAnalyzer,
+  samples: Float32Array,
+  sampleRate: number,
+  seeds: readonly JumpSeed[],
+  room: { lo: number; hi: number },
+  smooth: boolean,
+  cfg: SmoothConfig = ANALYSIS_CONFIG.seam,
+): SmoothedJumps {
+  if (!smooth) {
+    return {
+      shift: 0,
+      aligns: seeds.map(() => 0),
+      jumps: seeds.map((j) => ({ from: j.from, to: j.to })),
+      harmonies: seeds.map((j) => tool.harmonyAt(j.from, j.to)),
+    };
+  }
+  const duration = tool.inputs.duration;
+  // every time moves by the rotation, so the rotation must keep every time inside the song
+  const times = seeds.flatMap((j) => [j.from, j.to]);
+  const lo = Math.max(room.lo, -Math.min(...times));
+  const hi = Math.min(room.hi, duration - Math.max(...times));
+  const rot = chooseRotation(tool, seeds, lo, hi, cfg);
+  const aligns: number[] = [];
+  const jumps: SeamPlan['jumps'] = [];
+  const harmonies: (number | null)[] = [];
+  for (const seed of seeds) {
+    const to = seed.to + rot.shift;
+    const from0 = seed.from + rot.shift;
+    const al = alignEnd(samples, sampleRate, to, from0, cfg);
+    const from = clamp(from0 + al.align, to + 0.05, duration);
+    const beat = localBeatSeconds(tool, to);
+    const harmony = tool.harmonyAt(from, to);
+    const fade = chooseFade(samples, sampleRate, from, to, harmony, beat, cfg);
+    const level = chooseLevel(tool, samples, sampleRate, from, to, beat, cfg);
+    aligns.push(from - from0);
+    harmonies.push(harmony);
+    jumps.push({ from, to, fadeMs: fade.fadeMs, ...(level !== 0 ? { levelDb: level, rampSeconds: beat } : {}) });
+  }
+  return { shift: rot.shift, aligns, jumps, harmonies };
+}
+
 /**
  * Smooth one seam: rotate both edges, align the end edge, pick the fade and the level ramp (SPEC-seams.md 3). Returns
  * the plan for playing the loop; the loop's own points are left as the user set them.
@@ -392,38 +457,21 @@ export function smoothSeam(
   const minStart = Math.max(0, input.minStart ?? 0);
   const maxEnd = Math.min(duration, input.maxEnd ?? duration);
   const before = tool.scores(start, end);
-
-  const rot = chooseRotation(tool, start, end, minStart - start, maxEnd - end, cfg);
-  const s1 = start + rot.shift;
-  let e1 = end + rot.shift;
-
-  const al = alignEnd(samples, sampleRate, s1, e1, cfg);
-  const e2 = clamp(e1 + al.align, s1 + 0.05, maxEnd);
-  const align = e2 - e1;
-  e1 = e2;
-
-  const beat = localBeatSeconds(tool, s1);
-  const harmony = tool.harmonyAt(e1, s1);
-  const fade = chooseFade(samples, sampleRate, e1, s1, harmony, beat, cfg);
-  const level = chooseLevel(tool, samples, sampleRate, e1, s1, beat, cfg);
-
-  const after = tool.scores(s1, e1);
+  const r = smoothJumps(tool, samples, sampleRate, [{ from: end, to: start }], { lo: minStart - start, hi: maxEnd - end }, true, cfg);
+  const jump = r.jumps[0]!;
+  // keep the end edge inside the room it has
+  const e = Math.min(jump.from, maxEnd);
+  const adjusted = e === jump.from ? jump : { ...jump, from: e };
+  const after = tool.scores(adjusted.to, adjusted.from);
   return {
     forStart: start,
     forEnd: end,
     smooth: true,
-    shift: rot.shift,
-    align,
-    loopStart: s1,
-    loopEnd: e1,
-    jumps: [
-      {
-        from: e1,
-        to: s1,
-        fadeMs: fade.fadeMs,
-        ...(level !== 0 ? { levelDb: level, rampSeconds: beat } : {}),
-      },
-    ],
+    shift: r.shift,
+    align: adjusted.from - (end + r.shift),
+    loopStart: adjusted.to,
+    loopEnd: adjusted.from,
+    jumps: [adjusted],
     before,
     after,
     bridge: null,

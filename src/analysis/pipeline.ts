@@ -8,6 +8,8 @@ import type { BeatFeatures, FrameData } from './features';
 import { buildHarmonyModel, chromaSimilarity } from './harmony';
 import type { ChromaSimilarity, HarmonyModel } from './harmony';
 import { SeamAnalyzer, chipFor, nearestBeat } from './seam';
+import { findBridge } from './bridge';
+import { planBridge } from './bridgePlan';
 import { findNearbyLoop } from './nearby';
 import { smoothSeam } from './smooth';
 import { findSections } from './sections';
@@ -15,6 +17,7 @@ import { selfSimilarity } from './ssm';
 import type { SelfSimilarity } from './ssm';
 import { estimateTempo } from './tempo';
 import type { TempoResult } from './tempo';
+import type { SeamPlan } from '../model';
 import type { Analysis, AnalysisStage, AnalysisUpdate, LoopCandidate, NearbyLoop, Section, SeamReport, SeamRequest } from './types';
 
 export type ProgressFn = (stage: AnalysisStage, pct: number) => void;
@@ -197,7 +200,7 @@ export class AnalysisSession {
     const ssm = this.ssm;
     return requests.map((req) => {
       const before = tool.scores(req.start, req.end);
-      const plan =
+      let plan: SeamPlan | null =
         req.smooth === false
           ? null
           : smoothSeam(tool, this.samples, this.sampleRate, {
@@ -206,6 +209,22 @@ export class AnalysisSession {
               minStart: req.minStart,
               maxEnd: req.maxEnd,
             });
+      let bridge: SeamReport['bridge'] = null;
+      const model = tool.inputs.harmony;
+      if (req.bridge) {
+        bridge = 'none';
+        if (tool.hasGrid && model) {
+          const a = nearestBeat(this.beatTimes, req.start);
+          const b = nearestBeat(this.beatTimes, req.end);
+          const search = findBridge(model, a, b, this.beatsPerBar);
+          bridge = search.status;
+          if (search.status === 'found') {
+            const bp = planBridge(tool, this.samples, this.sampleRate, req, req.smooth !== false, search);
+            if (bp) plan = bp;
+            else bridge = 'none';
+          }
+        }
+      }
       const scores = plan ? plan.after : before;
       let context: number | null = null;
       if (tool.hasGrid && ssm) {
@@ -214,7 +233,6 @@ export class AnalysisSession {
         if (b > a) context = contextMatch(ssm, a, b);
       }
       let nearby: NearbyLoop | null = null;
-      const model = tool.inputs.harmony;
       if (tool.hasGrid && model && ssm && this.features && scores.harmony !== null) {
         const a = nearestBeat(this.beatTimes, req.start);
         const b = nearestBeat(this.beatTimes, req.end);
@@ -244,6 +262,7 @@ export class AnalysisSession {
         chip: chipFor(scores.quality),
         plan,
         nearby,
+        bridge,
       };
     });
   }
