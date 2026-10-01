@@ -728,3 +728,14 @@
     border-radius: 18px;
   }
 }
+
+/* at 320 px the pad, the time and Export no longer fit on one row: Export takes a row of its own under them */
+@media (max-width: 360px) {
+  :root[data-skin='space'] .transport-main {
+    flex-wrap: wrap;
+  }
+
+  :root[data-skin='space'] .transport-main .btn.export {
+    flex: 1 1 100%;
+  }
+}

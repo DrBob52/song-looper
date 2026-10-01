@@ -1973,9 +1973,25 @@ dialog.export-dialog::backdrop {
   .speed-field {
     flex: 1 1 100%;
   }
+  /* width 0 and room to grow: a slider's own width (about 129 px) must not set how wide the field's smallest size is */
   .speed-field input[type='range'] {
-    flex: 1 1 auto;
-    width: auto;
+    flex: 1 1 0;
+    width: 0;
+    min-width: 40px;
+  }
+}
+
+/* ---- a very narrow phone (320 px): Export gives up some padding so that the time keeps room next to it, and the time may
+   break anywhere rather than run into the button, whatever font it is set in ---- */
+
+@media (max-width: 360px) {
+  .transport-main .btn.export {
+    padding: 8px 10px;
+    font-size: 0.82rem;
+    letter-spacing: 0;
+  }
+  .transport .time {
+    overflow-wrap: anywhere;
   }
 }
 
