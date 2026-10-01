@@ -188,7 +188,7 @@ export const ANALYSIS_CONFIG = {
      * an attack) counts against it by `behindWeight`. Strengths are relative to the `refPercentile` of the
      * song's beat-onset strengths.
      */
-    transient: { aheadMs: [6, 40], behindMs: [20, 3], behindWeight: 0.5, refPercentile: 0.5 },
+    transient: { aheadMs: [6, 40], behindMs: [20, 3], behindWeight: 0.5, refPercentile: 0.5, nearMs: [30, 40] },
     /**
      * Spectral continuity compares the last analysis frame wholly before the loop end with the first one wholly
      * after the loop start (`frameOffset` frames from the edges, so that neither overlaps the other side), and
@@ -197,6 +197,61 @@ export const ANALYSIS_CONFIG = {
      * `minTypicalDb` stops a flat part of the song from making every change look huge.
      */
     spectral: { frameOffset: 2, minTypicalDb: 0.5, bucketsPerBeat: 32, minSamples: 5, maxSpread: 3 },
+
+    /**
+     * 3.1 Rotation: both loop edges move together (the loop keeps its length), at most one beat either way. Every
+     * `stepBeats` of a beat is scored, then the best `refineTop` are refined in `refineStepMs` steps within
+     * `refineRangeMs`. `movePenalty` (per beat moved) and `minGain` keep a seam that is already good where it is.
+     */
+    rotation: {
+      stepBeats: 0.25,
+      weights: { transient: 0.4, spectral: 0.4, harmony: 0.2 },
+      refineTop: 2,
+      refineStepMs: 5,
+      refineRangeMs: 30,
+      movePenalty: 0.03,
+      minGain: 0.02,
+    },
+
+    /**
+     * 3.2 Micro-alignment: the end edge alone moves by at most `maxMs`, to the lag where the fine onset curves around
+     * the two edges (STFT `frameSize` / `hop` at the analysis rate, `beforeSeconds` and `afterSeconds` of context)
+     * correlate best. With no transient on either side (peak flux below `flatFlux`) the mid-channel waveform
+     * (`waveformMs` of context each side) is used instead. A lag must beat not moving by `minGain`.
+     */
+    align: {
+      maxMs: 20,
+      frameSize: 256,
+      hop: 16,
+      beforeSeconds: 0.15,
+      afterSeconds: 0.15,
+      flatFlux: 4,
+      waveformMs: 30,
+      minGain: 0.02,
+      movePenaltyPerMs: 0.0005,
+    },
+
+    /**
+     * 3.3 Adaptive fade: the shortest of these lengths (and one beat) whose spectral discontinuity across the rendered
+     * seam is within `tolerance` of the best (plus `floor`, in flux units). With harmony below `poorHarmony` only fades
+     * up to `poorMaxMs` are allowed: a long fade smears two chords together.
+     */
+    fade: {
+      candidatesMs: [10, 20, 40, 80, 160],
+      poorHarmony: 0.5,
+      poorMaxMs: 40,
+      contextMs: 80,
+      frameSize: 256,
+      hop: 64,
+      zonePadMs: 6,
+      /** Flux compression log(1 + gamma * magnitude) for this measure: near-linear, so a slow fade scores lower than a quick one. */
+      gamma: 1,
+      tolerance: 0.15,
+      floor: 0.05,
+    },
+
+    /** 3.4 Level match: when the last and first beats differ by more than `thresholdDb`, ramp the last beat (at most `maxDb`). */
+    level: { thresholdDb: 1.5, maxDb: 9 },
   },
 
   /** 10. Edge cases */

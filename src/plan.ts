@@ -1,4 +1,4 @@
-import type { LoopRegion, Span } from './model';
+import type { LoopRegion, SeamPlan, Span } from './model';
 import { REGION_COLORS } from './model';
 
 export const MIN_REGION_SECONDS = 0.1;
@@ -73,4 +73,33 @@ export function newRegionId(): string {
 /** Is `span` overlapping any region? */
 export function overlapsAny(regions: readonly LoopRegion[], span: Span, excludeId?: string): boolean {
   return regions.some((r) => r.id !== excludeId && r.start < span.end - 1e-9 && r.end > span.start + 1e-9);
+}
+
+// ---------------------------------------------------------------------------
+// Seam smoothing state of a loop
+// ---------------------------------------------------------------------------
+
+/** Smoothing is on unless the user turned it off (or pressed Undo). */
+export function isSmooth(region: Pick<LoopRegion, 'smooth'>): boolean {
+  return region.smooth !== false;
+}
+
+/** Does the plan belong to the loop's current points? */
+export function planFits(region: Pick<LoopRegion, 'start' | 'end'>, plan: SeamPlan): boolean {
+  return Math.abs(plan.forStart - region.start) < 1e-6 && Math.abs(plan.forEnd - region.end) < 1e-6;
+}
+
+/** Attach a seam plan to a loop, if it was computed for the loop's current points; otherwise the loop is returned unchanged. */
+export function withSeamPlan(region: LoopRegion, plan: SeamPlan | null): LoopRegion {
+  if (!plan || !planFits(region, plan)) return region;
+  return { ...region, seam: plan };
+}
+
+/**
+ * Undo (SPEC-seams.md 3.5): turn smoothing off for the loop and forget what the smoother decided. The loop's own
+ * points were never moved (the plan only says how to play them), so it plays exactly as the user set it.
+ */
+export function undoSmoothing(region: LoopRegion): LoopRegion {
+  const { seam: _plan, ...rest } = region;
+  return { ...rest, smooth: false };
 }

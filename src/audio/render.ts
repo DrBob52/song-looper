@@ -1,6 +1,7 @@
-import type { LoopRegion, Plan } from '../model';
+import type { JumpPlan, LoopRegion, Plan } from '../model';
 import { MAX_REPEATS } from '../model';
 import { RENDER_CONFIG } from './config';
+import { cycleSeconds, loopPath } from './path';
 import type { AudioBufferLike } from './types';
 
 export type { LoopRegion, Plan } from '../model';
@@ -10,8 +11,11 @@ export type { LoopRegion, Plan } from '../model';
 // ---------------------------------------------------------------------------
 
 export interface Segment {
-  /** `original` is plain song audio; `repeat` is one play of a loop region. */
-  kind: 'original' | 'repeat';
+  /**
+   * `original` is plain song audio; `repeat` is one play of a loop region; `bridge` is a stretch of the song
+   * that follows a loop's end on every repeat but the last (SPEC-seams.md 5).
+   */
+  kind: 'original' | 'repeat' | 'bridge';
   /** Source span in the original song. */
   start: number;
   end: number;
@@ -43,13 +47,43 @@ export function normalizeRegions(regions: readonly LoopRegion[], duration: numbe
   return out;
 }
 
+/** A normalised region with the seam plan applied: the loop's real edges and the cycle it plays. */
+export interface PlannedRegion {
+  id: string;
+  repeats: number;
+  /** The loop's own edges after the seam plan's shift (equal to the region's when there is no plan). */
+  start: number;
+  end: number;
+  /** Source pieces of one cycle and the jumps that join them (see LoopPath). */
+  pieces: { start: number; end: number }[];
+  jumps: JumpPlan[];
+}
+
+/**
+ * The regions as they play: normalised, with each region's seam plan (rotation, alignment, bridge) applied. A plan
+ * that would put the loop out of the song or into a neighbour is ignored.
+ */
+export function planRegions(plan: Plan, duration: number): PlannedRegion[] {
+  const out: PlannedRegion[] = [];
+  let cursor = 0;
+  for (const r of normalizeRegions(plan.regions, duration)) {
+    let path = loopPath(r);
+    const fits = path.start >= cursor - 1e-9 && path.end <= duration + 1e-9 && path.end > path.start;
+    const inside = path.pieces.every((p) => p.end > p.start && p.start >= -1e-9 && p.end <= duration + 1e-9);
+    if (!fits || !inside) path = loopPath({ start: r.start, end: r.end });
+    out.push({ id: r.id, repeats: r.repeats, start: path.start, end: path.end, pieces: path.pieces, jumps: path.jumps });
+    cursor = path.end;
+  }
+  return out;
+}
+
 /**
  * The output layout as a list of segments over the original:
  * [0, r1.start) -> r1 x repeats1 -> [r1.end, r2.start) -> ... -> [rk.end, duration).
- * repeats = 1 everywhere gives back the original song.
+ * repeats = 1 everywhere gives back the original song. Every repeat but a loop's last is followed by its bridge, if any.
  */
 export function buildTimeline(plan: Plan, duration: number): Segment[] {
-  const regions = normalizeRegions(plan.regions, duration);
+  const regions = planRegions(plan, duration);
   const segments: Segment[] = [];
   let out = 0;
   let cursor = 0;
@@ -73,6 +107,23 @@ export function buildTimeline(plan: Plan, duration: number): Segment[] {
         repeats: r.repeats,
       });
       out += len;
+      if (k === r.repeats) continue;
+      // the bridge: whatever the cycle plays beyond the loop itself
+      r.pieces.forEach((p, i) => {
+        const start = i === 0 ? r.end : p.start;
+        if (p.end - start <= 1e-9) return;
+        segments.push({
+          kind: 'bridge',
+          start,
+          end: p.end,
+          outStart: out,
+          outEnd: out + (p.end - start),
+          regionId: r.id,
+          repeat: k,
+          repeats: r.repeats,
+        });
+        out += p.end - start;
+      });
     }
     cursor = r.end;
   }
@@ -80,10 +131,12 @@ export function buildTimeline(plan: Plan, duration: number): Segment[] {
   return segments;
 }
 
-/** Length of the extended output in seconds: D + sum((repeats - 1) * regionLength). */
+/** Length of the extended output in seconds: D + sum((repeats - 1) * (loop + bridge)). */
 export function extendedDuration(plan: Plan, duration: number): number {
   let total = duration;
-  for (const r of normalizeRegions(plan.regions, duration)) total += (r.repeats - 1) * (r.end - r.start);
+  for (const r of planRegions(plan, duration)) {
+    total += (r.repeats - 1) * cycleSeconds(r);
+  }
   return total;
 }
 
@@ -100,7 +153,7 @@ export function extendedToOriginal(timeline: Segment[], t: number): { time: numb
 /** Map an original-song time to the extended output (first play of any region). */
 export function originalToExtended(timeline: Segment[], t: number): number {
   for (const seg of timeline) {
-    if (seg.kind === 'repeat' && seg.repeat !== 1) continue;
+    if (seg.kind === 'bridge' || (seg.kind === 'repeat' && seg.repeat !== 1)) continue;
     if (t >= seg.start && t < seg.end) return seg.outStart + (t - seg.start);
   }
   const last = timeline[timeline.length - 1];
@@ -111,10 +164,16 @@ export function originalToExtended(timeline: Segment[], t: number): number {
 
 /** Signature of everything that changes the rendered output, for caching. */
 export function planKey(plan: Plan, duration: number, crossfadeMs: number): string {
-  const regions = normalizeRegions(plan.regions, duration);
+  const regions = planRegions(plan, duration);
+  const f = (v: number | undefined): string | number => (v === undefined ? 0 : v.toFixed(6));
   return JSON.stringify([
     crossfadeMs,
-    regions.map((r) => [r.start.toFixed(6), r.end.toFixed(6), r.repeats]),
+    regions.map((r) => [
+      r.start.toFixed(6),
+      r.end.toFixed(6),
+      r.repeats,
+      r.jumps.map((j) => [f(j.from), f(j.to), f(j.fadeMs), f(j.levelDb), f(j.rampSeconds)]),
+    ]),
   ]);
 }
 
@@ -132,12 +191,27 @@ export interface RenderOptions {
   onProgress?: (fraction: number) => void;
 }
 
+/** One jump in sample indices. */
+export interface SampleJump {
+  from: number;
+  to: number;
+  /** Crossfade length in ms for this jump; undefined means the global setting. */
+  fadeMs?: number;
+  /** Linear gain that the ramp over the last `ramp` samples before the jump reaches (1 = no ramp). */
+  gain: number;
+  ramp: number;
+}
+
 /** A loop region in sample indices, after zero-crossing snapping. */
 export interface SampleRegion {
   id: string;
+  /** The loop's own edges. */
   start: number;
   end: number;
   repeats: number;
+  /** The cycle played on every repeat but the last: source pieces joined by jumps (see LoopPath). */
+  pieces: { start: number; end: number }[];
+  jumps: SampleJump[];
 }
 
 type Slope = 1 | -1 | 0;
@@ -192,8 +266,9 @@ export function snapToZeroCrossing(
 }
 
 /**
- * Convert a plan to sample indices, snapping each region's edges to zero crossings
- * (both channels move together because the search runs on the mid channel).
+ * Convert a plan to sample indices, snapping each jump's two ends to zero crossings (both channels move
+ * together because the search runs on the mid channel). A plain loop has one jump, from its end back to its
+ * start, so this is the loop's two edges.
  */
 export function regionsToSamples(
   buffer: AudioBufferLike,
@@ -202,36 +277,72 @@ export function regionsToSamples(
 ): SampleRegion[] {
   const sr = buffer.sampleRate;
   const length = buffer.length;
-  const regions = normalizeRegions(plan.regions, buffer.duration);
+  const regions = planRegions(plan, buffer.duration);
   const snap = options.snapZeroCrossings ?? true;
   const radius = Math.round((RENDER_CONFIG.zeroCrossRadiusMs / 1000) * sr);
   const mid = snap ? makeMid(buffer) : null;
+  const toIndex = (t: number): number => Math.min(length, Math.max(0, Math.round(t * sr)));
   const out: SampleRegion[] = [];
   let cursor = 0;
   for (const r of regions) {
-    let start = Math.min(length, Math.max(0, Math.round(r.start * sr)));
-    let end = Math.min(length, Math.max(0, Math.round(r.end * sr)));
+    const jumps: SampleJump[] = r.jumps.map((j) => ({
+      from: toIndex(j.from),
+      to: toIndex(j.to),
+      fadeMs: j.fadeMs,
+      gain: j.levelDb ? 10 ** (j.levelDb / 20) : 1,
+      ramp: j.levelDb ? Math.max(0, Math.round((j.rampSeconds ?? 0) * sr)) : 0,
+    }));
+    let start = toIndex(r.start);
+    let end = toIndex(r.end);
     if (mid) {
       const a = snapToZeroCrossing(mid, length, start, radius);
-      const b = snapToZeroCrossing(mid, length, end, radius, a.slope);
       start = a.index;
-      end = b.index;
+      // each jump: the landing point first, then the departure point on a crossing of the same slope
+      for (const j of jumps) {
+        const to = snapToZeroCrossing(mid, length, j.to, radius);
+        const from = snapToZeroCrossing(mid, length, j.from, radius, to.slope);
+        j.to = to.index;
+        j.from = from.index;
+      }
+      end = snapToZeroCrossing(mid, length, end, radius, a.slope).index;
     }
     start = Math.max(start, cursor);
     if (end <= start) continue;
-    out.push({ id: r.id, start, end, repeats: r.repeats });
+    // the jump back to the loop start lands exactly on the loop start
+    jumps[jumps.length - 1]!.to = start;
+    // A plain loop leaves from its own end.
+    if (jumps.length === 1) jumps[0]!.from = end;
+    const pieces = jumps.map((j, k) => ({ start: k === 0 ? start : jumps[k - 1]!.to, end: j.from }));
+    if (pieces.some((p) => p.end <= p.start)) {
+      // a degenerate plan: fall back to the plain loop
+      out.push({
+        id: r.id,
+        start,
+        end,
+        repeats: r.repeats,
+        pieces: [{ start, end }],
+        jumps: [{ from: end, to: start, gain: 1, ramp: 0 }],
+      });
+    } else {
+      out.push({ id: r.id, start, end, repeats: r.repeats, pieces, jumps });
+    }
     cursor = end;
   }
   return out;
 }
 
+/** Samples that one cycle (loop plus bridge) adds. */
+export function cycleSamples(r: SampleRegion): number {
+  return r.pieces.reduce((s, p) => s + (p.end - p.start), 0);
+}
+
 export function renderedLength(regions: SampleRegion[], length: number): number {
   let total = length;
-  for (const r of regions) total += (r.repeats - 1) * (r.end - r.start);
+  for (const r of regions) total += (r.repeats - 1) * cycleSamples(r);
   return total;
 }
 
-interface FadeWindow {
+export interface FadeWindow {
   out: Float32Array;
   inn: Float32Array;
 }
@@ -254,7 +365,7 @@ export function fadeWindow(half: number, rho = 0): FadeWindow {
 }
 
 /** Normalised correlation (clamped to [0, 1]) of the audio on each side of a seam, on the mid channel. */
-function seamCorrelation(mid: (i: number) => number, length: number, s: number, e: number, half: number): number {
+export function seamCorrelation(mid: (i: number) => number, length: number, s: number, e: number, half: number): number {
   const at = (i: number): number => (i < 0 || i >= length ? 0 : mid(i));
   let ab = 0;
   let aa = 0;
@@ -281,19 +392,137 @@ export function seamFade(
   region: { start: number; end: number },
   options: Pick<RenderOptions, 'crossfadeMs' | 'adaptiveCrossfade'> = {},
 ): FadeWindow | null {
-  const crossfadeMs = options.crossfadeMs ?? RENDER_CONFIG.crossfadeMs;
+  return jumpFade(mid, length, sampleRate, { from: region.end, to: region.start }, Math.floor((region.end - region.start) / 2), options);
+}
+
+/** The fade of one jump, `maxHalf` samples at most on either side of it (the pieces it joins may be short). */
+function jumpFade(
+  mid: (i: number) => number,
+  length: number,
+  sampleRate: number,
+  jump: Pick<SampleJump, 'from' | 'to' | 'fadeMs'>,
+  maxHalf: number,
+  options: Pick<RenderOptions, 'crossfadeMs' | 'adaptiveCrossfade'>,
+): FadeWindow | null {
+  const crossfadeMs = jump.fadeMs ?? options.crossfadeMs ?? RENDER_CONFIG.crossfadeMs;
   const adaptive = options.adaptiveCrossfade ?? RENDER_CONFIG.adaptiveCrossfade;
   const halfFull = Math.max(0, Math.floor((crossfadeMs / 1000) * sampleRate * 0.5));
-  const half = Math.min(halfFull, Math.floor((region.end - region.start) / 2));
+  const half = Math.min(halfFull, maxHalf);
   if (half < 1) return null;
-  return fadeWindow(half, adaptive ? seamCorrelation(mid, length, region.start, region.end, half) : 0);
+  return fadeWindow(half, adaptive ? seamCorrelation(mid, length, jump.to, jump.from, half) : 0);
+}
+
+// ---------------------------------------------------------------------------
+// Stitching: the one routine that renders the export, the loop preview and the seam audition
+// ---------------------------------------------------------------------------
+
+/** A stretch of the source to copy, and how it joins the stretch before it. */
+export interface Part {
+  start: number;
+  end: number;
+  /** Set when the previous part does not lead naturally into this one: it jumps from `prev.end` to `start`. */
+  jump?: Pick<SampleJump, 'fadeMs' | 'gain' | 'ramp'>;
+}
+
+export interface Stitched {
+  channels: Float32Array[];
+  /** Output position of the start of each part. */
+  partStarts: number[];
 }
 
 /**
- * Render the extended song: copy the timeline's segments and equal-power crossfade each
- * jump from a region's end back to its start. Samples beyond the buffer edges read as
- * silence. Returns one Float32Array per channel. Output length is
- * length + sum((repeats - 1) * regionLength).
+ * Copy the parts one after another and give every jump its seam: an equal-power crossfade (blending toward
+ * equal-gain when both sides correlate) of the stream that would have continued past the end of the previous part
+ * with the stream before the start of this one, centred on the join, plus the jump's level ramp over the last
+ * `ramp` samples of the previous part. Samples beyond the buffer edges read as silence.
+ */
+export function stitch(buffer: AudioBufferLike, parts: Part[], options: RenderOptions = {}): Stitched {
+  const length = buffer.length;
+  const mid = makeMid(buffer);
+  const partStarts: number[] = [];
+  let total = 0;
+  for (const p of parts) {
+    partStarts.push(total);
+    total += p.end - p.start;
+  }
+  // One fade per distinct jump, shared by all channels so the stereo image stays aligned and every play of a seam is identical.
+  const fades = new Map<string, FadeWindow | null>();
+  const fadeOf = (i: number): FadeWindow | null => {
+    const part = parts[i]!;
+    const prev = parts[i - 1]!;
+    const key = `${prev.end}|${part.start}|${part.jump!.fadeMs ?? ''}|${Math.min(prev.end - prev.start, part.end - part.start)}`;
+    if (!fades.has(key)) {
+      const maxHalf = Math.floor(Math.min(prev.end - prev.start, part.end - part.start) / 2);
+      fades.set(key, jumpFade(mid, length, buffer.sampleRate, { from: prev.end, to: part.start, fadeMs: part.jump!.fadeMs }, maxHalf, options));
+    }
+    return fades.get(key)!;
+  };
+  const windows = parts.map((p, i) => (i > 0 && p.jump ? fadeOf(i) : null));
+
+  const channels: Float32Array[] = [];
+  const nCh = buffer.numberOfChannels;
+  for (let c = 0; c < nCh; c++) {
+    const src = buffer.getChannelData(c);
+    const at = (i: number): number => (i < 0 || i >= length ? 0 : src[i]!);
+    const out = new Float32Array(total);
+    for (let i = 0; i < parts.length; i++) {
+      const p = parts[i]!;
+      const a = Math.max(0, p.start);
+      const b = Math.min(length, p.end);
+      if (b > a) out.set(src.subarray(a, b), partStarts[i]! + (a - p.start));
+    }
+    for (let i = 1; i < parts.length; i++) {
+      const p = parts[i]!;
+      const jump = p.jump;
+      if (!jump) continue;
+      const prev = parts[i - 1]!;
+      const seam = partStarts[i]!;
+      const win = windows[i];
+      const half = win ? win.out.length / 2 : 0;
+      // gain of the stream that leaves the loop end: a ramp over the last `ramp` samples, then held while it fades out
+      const ramp = jump.gain === 1 ? 0 : Math.max(0, Math.min(jump.ramp, prev.end - prev.start));
+      const gainAt = (offset: number): number =>
+        offset >= 0 ? jump.gain : offset < -ramp ? 1 : 1 + (jump.gain - 1) * ((offset + ramp) / ramp);
+      if (ramp > 0) {
+        for (let q = seam - ramp; q < seam - half; q++) if (q >= 0) out[q] = out[q]! * gainAt(q - seam);
+      }
+      if (win) {
+        for (let k = 0; k < half * 2; k++) {
+          const q = seam - half + k;
+          if (q < 0 || q >= total) continue;
+          out[q] = win.out[k]! * gainAt(k - half) * at(prev.end - half + k) + win.inn[k]! * at(p.start - half + k);
+        }
+      }
+    }
+    channels.push(out);
+    options.onProgress?.((c + 1) / nCh);
+  }
+  return { channels, partStarts };
+}
+
+/** The parts of one region's play: the original before it, `repeats - 1` cycles, the loop once more, then it flows on. */
+export function regionParts(r: SampleRegion, cursor: number): Part[] {
+  const parts: Part[] = [{ start: cursor, end: r.start }];
+  const back = r.jumps[r.jumps.length - 1]!;
+  for (let k = 0; k < r.repeats - 1; k++) {
+    r.pieces.forEach((p, i) => {
+      const via = i === 0 ? (k === 0 ? undefined : back) : r.jumps[i - 1]!;
+      parts.push({ start: p.start, end: p.end, jump: via && { fadeMs: via.fadeMs, gain: via.gain, ramp: via.ramp } });
+    });
+  }
+  // the final repeat: just the loop, entered by the jump back (or naturally, when the loop plays once)
+  parts.push({
+    start: r.start,
+    end: r.end,
+    jump: r.repeats > 1 ? { fadeMs: back.fadeMs, gain: back.gain, ramp: back.ramp } : undefined,
+  });
+  return parts;
+}
+
+/**
+ * Render the extended song: copy the timeline's segments and equal-power crossfade each jump (a loop's end back
+ * to its start, and the jumps of a bridge). Samples beyond the buffer edges read as silence. Returns one
+ * Float32Array per channel. Output length is length + sum((repeats - 1) * (loop + bridge)).
  */
 export function renderExtended(
   buffer: AudioBufferLike,
@@ -309,49 +538,14 @@ export function renderExtended(
       `The extended song would be ${(total / sr / 60).toFixed(1)} minutes long. The limit is ${RENDER_CONFIG.maxExtendedSeconds / 60} minutes; lower a repeat count.`,
     );
   }
-  const mid = makeMid(buffer);
-  // One fade per region, shared by all channels and repeats so the stereo image stays aligned
-  // and every repeat of a seam is identical (which also makes a rendered loop periodic).
-  const fades: (FadeWindow | null)[] = regions.map((r) =>
-    r.repeats < 2 ? null : seamFade(mid, length, sr, r, options),
-  );
-
-  const outChannels: Float32Array[] = [];
-  const nCh = buffer.numberOfChannels;
-  for (let c = 0; c < nCh; c++) {
-    const src = buffer.getChannelData(c);
-    const out = new Float32Array(total);
-    const at = (i: number): number => (i < 0 || i >= length ? 0 : src[i]!);
-    let cursor = 0; // read position in the source
-    let pos = 0; // write position in the output
-    for (let ri = 0; ri < regions.length; ri++) {
-      const r = regions[ri]!;
-      out.set(src.subarray(cursor, r.start), pos);
-      pos += r.start - cursor;
-      const regionOutStart = pos;
-      const len = r.end - r.start;
-      const body = src.subarray(r.start, r.end);
-      for (let k = 0; k < r.repeats; k++) {
-        out.set(body, pos);
-        pos += len;
-      }
-      const win = fades[ri];
-      if (win) {
-        const half = win.out.length / 2;
-        for (let k = 1; k < r.repeats; k++) {
-          const seam = regionOutStart + k * len;
-          const base = seam - half;
-          for (let i = 0; i < half * 2; i++) {
-            out[base + i] = win.out[i]! * at(r.end - half + i) + win.inn[i]! * at(r.start - half + i);
-          }
-        }
-      }
-      cursor = r.end;
-      options.onProgress?.((c + (ri + 1) / (regions.length + 1)) / nCh);
-    }
-    out.set(src.subarray(cursor, length), pos);
-    outChannels.push(out);
+  const parts: Part[] = [];
+  let cursor = 0;
+  for (const r of regions) {
+    parts.push(...regionParts(r, cursor));
+    cursor = r.end;
   }
+  parts.push({ start: cursor, end: length });
+  const { channels } = stitch(buffer, parts, options);
   options.onProgress?.(1);
-  return outChannels;
+  return channels;
 }

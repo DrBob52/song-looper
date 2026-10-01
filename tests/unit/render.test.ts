@@ -1,11 +1,13 @@
 import { describe, expect, it } from 'vitest';
-import type { LoopRegion } from '../../src/model';
+import type { LoopRegion, SeamPlan } from '../../src/model';
+import { isSmooth, undoSmoothing, withSeamPlan } from '../../src/plan';
 import {
   buildTimeline,
   extendedDuration,
   extendedToOriginal,
   normalizeRegions,
   originalToExtended,
+  planKey,
   regionsToSamples,
   renderExtended,
   snapToZeroCrossing,
@@ -311,5 +313,163 @@ describe('seam snippets', () => {
     // and the third repeat too: the loop is periodic
     expect(Array.from(body.channels[0]!)).toEqual(Array.from(full.subarray(s.end + period, s.end + 2 * period)));
     expect(body.originalStart * rate).toBe(s.start);
+  });
+});
+
+describe('seam plans in the renderer (SPEC-seams.md 3)', () => {
+  const rate = 8000;
+  const song = makeBuffer([noise(rate * 30, 21)], rate);
+  const loop = { start: 10, end: 16 };
+  const scores = { transient: 0, spectral: 0, harmony: null, quality: 0 };
+  const planOf = (over: Partial<SeamPlan> & { fadeMs?: number; levelDb?: number }): SeamPlan => {
+    const shift = over.shift ?? 0;
+    const align = over.align ?? 0;
+    const from = loop.end + shift + align;
+    const to = loop.start + shift;
+    return {
+      forStart: loop.start,
+      forEnd: loop.end,
+      smooth: true,
+      shift,
+      align,
+      loopStart: to,
+      loopEnd: from,
+      jumps: [{ from, to, fadeMs: over.fadeMs, ...(over.levelDb ? { levelDb: over.levelDb, rampSeconds: 0.5 } : {}) }],
+      before: scores,
+      after: scores,
+      bridge: null,
+    };
+  };
+  const reg = (seam?: SeamPlan, repeats = 3) => ({ id: 'x', ...loop, repeats, color: '#000', seam });
+
+  it('a plan that shifts both edges moves what plays, not how long it is', () => {
+    const plain = renderExtended(song, { regions: [reg()] }, { snapZeroCrossings: false });
+    const rotated = renderExtended(song, { regions: [reg(planOf({ shift: 0.1 }))] }, { snapZeroCrossings: false });
+    expect(rotated[0]!.length).toBe(plain[0]!.length);
+    expect(extendedDuration({ regions: [reg(planOf({ shift: 0.1 }))] }, 30)).toBeCloseTo(extendedDuration({ regions: [reg()] }, 30), 9);
+    // the second pass starts 0.1 s later in the song
+    const k = Math.round(16.1 * rate);
+    const seamEnd = Math.round(16.1 * rate);
+    expect(Array.from(rotated[0]!.subarray(seamEnd + 100, seamEnd + 300))).toEqual(
+      Array.from(song.getChannelData(0).subarray(Math.round(10.1 * rate) + 100, Math.round(10.1 * rate) + 300)),
+    );
+    expect(k).toBeGreaterThan(0);
+  });
+
+  it('aligning the end edge changes each repeat by that much, and the timeline knows', () => {
+    const plan = { regions: [reg(planOf({ align: 0.012 }), 4)] };
+    expect(extendedDuration(plan, 30)).toBeCloseTo(30 + 3 * (6 + 0.012), 9);
+    const tl = buildTimeline(plan, 30);
+    expect(tl[tl.length - 1]!.outEnd).toBeCloseTo(30 + 3 * (6 + 0.012), 9);
+    const out = renderExtended(song, plan, { snapZeroCrossings: false });
+    expect(out[0]!.length).toBe(Math.round(30 * rate) + 3 * Math.round(6.012 * rate));
+  });
+
+  it('a jump can carry its own fade length', () => {
+    const base = { snapZeroCrossings: false, crossfadeMs: 20, adaptiveCrossfade: false } as const;
+    const a = renderExtended(song, { regions: [reg(planOf({ fadeMs: 40 }), 2)] }, base)[0]!;
+    const b = renderExtended(song, { regions: [reg(undefined, 2)] }, base)[0]!; // the global 20 ms
+    const e = 16 * rate;
+    const half40 = 160;
+    const half20 = 80;
+    // both are plain copies outside their windows ...
+    expect(a[e - half40 - 1]).toBe(b[e - half40 - 1]);
+    expect(a[e + half40]).toBe(b[e + half40]);
+    // ... and between the windows the 40 ms fade is still mixing while the 20 ms one has finished
+    expect(a[e + half20 + 1]).not.toBe(b[e + half20 + 1]);
+  });
+
+  it('a level ramp meets the two sides at one level, and only on the repeats that jump back', () => {
+    const tone = sine(440, 30, rate, 0.5);
+    const buf = makeBuffer([tone], rate);
+    const plan = planOf({ levelDb: -6 });
+    const out = renderExtended(buf, { regions: [{ ...reg(plan, 3) }] }, { snapZeroCrossings: false })[0]!;
+    const rms = (x: Float32Array, a: number, b: number): number => {
+      let s = 0;
+      for (let i = a; i < b; i++) s += x[i]! * x[i]!;
+      return Math.sqrt(s / (b - a));
+    };
+    const w = Math.round(0.04 * rate);
+    const seam1 = 16 * rate;
+    // just before the first seam's 20 ms window the level has come down to about the ramp's end gain (6 dB, 0.5)
+    const w10 = Math.round(0.01 * rate);
+    const near = rms(out, seam1 - 3 * w10, seam1 - w10) / rms(tone, 10 * rate, 10 * rate + 2 * w10);
+    expect(near).toBeGreaterThan(10 ** (-6 / 20) - 0.01);
+    expect(near).toBeLessThan(0.54);
+    // a beat earlier it was untouched (ramp is a beat long)
+    expect(rms(out, seam1 - rate, seam1 - rate + w) / rms(tone, 15 * rate, 15 * rate + w)).toBeCloseTo(1, 1);
+    // the last repeat leaves the loop untouched and flows into the rest of the song
+    const lastEnd = 28 * rate;
+    expect(rms(out, lastEnd - w, lastEnd)).toBeCloseTo(rms(tone, 16 * rate - w, 16 * rate), 3);
+  });
+
+  it('ignores a plan computed for other points', () => {
+    const stale = { ...planOf({ shift: 0.1 }), forStart: 9.9 };
+    const a = renderExtended(song, { regions: [reg(stale)] });
+    const b = renderExtended(song, { regions: [reg()] });
+    expect(Array.from(a[0]!)).toEqual(Array.from(b[0]!));
+    expect(planKey({ regions: [reg(stale)] }, 30, 20)).toBe(planKey({ regions: [reg()] }, 30, 20));
+    expect(planKey({ regions: [reg(planOf({ shift: 0.1 }))] }, 30, 20)).not.toBe(planKey({ regions: [reg()] }, 30, 20));
+  });
+
+  it('ignores a plan that would leave the song or run into the loop before it', () => {
+    const early = planOf({ shift: -12 });
+    const a = renderExtended(song, { regions: [reg(early)] });
+    const b = renderExtended(song, { regions: [reg()] });
+    expect(Array.from(a[0]!)).toEqual(Array.from(b[0]!));
+    const prev = { id: 'p', start: 2, end: 9.95, repeats: 2, color: '#000' };
+    const crowd = planOf({ shift: -0.2 });
+    const c = renderExtended(song, { regions: [prev, reg(crowd)] });
+    const d = renderExtended(song, { regions: [prev, reg()] });
+    expect(Array.from(c[0]!)).toEqual(Array.from(d[0]!));
+  });
+
+  it('seam audition, loop preview and export agree with a plan (rotation, alignment, fade and level)', () => {
+    const plan = planOf({ shift: -0.03, align: 0.007, fadeMs: 40, levelDb: -3 });
+    const region = { ...loop, seam: plan };
+    const full = renderExtended(song, { regions: [reg(plan, 4)] })[0]!;
+    const s = regionsToSamples(song, { regions: [reg(plan, 4)] })[0]!;
+    // the seam audition equals the export around its first seam
+    const snip = renderSeamSnippet(song, region);
+    const around = full.subarray(s.end - 4 * rate, s.end + 4 * rate);
+    expect(Array.from(snip.channels[0]!)).toEqual(Array.from(around));
+    // the loop body equals the second and third repeat of the export
+    const body = renderLoopBody(song, region);
+    const period = s.end - s.start;
+    expect(body.channels[0]!.length).toBe(period);
+    expect(Array.from(body.channels[0]!)).toEqual(Array.from(full.subarray(s.end, s.end + period)));
+    expect(Array.from(body.channels[0]!)).toEqual(Array.from(full.subarray(s.end + period, s.end + 2 * period)));
+  });
+});
+
+describe('Undo (SPEC-seams.md 3.5)', () => {
+  it('restores the original points exactly, turns smoothing off and plays like the plain loop', () => {
+    const plan: SeamPlan = {
+      forStart: 12.3456789,
+      forEnd: 24.6913578,
+      smooth: true,
+      shift: -0.061,
+      align: 0.007,
+      loopStart: 12.3456789 - 0.061,
+      loopEnd: 24.6913578 - 0.061 + 0.007,
+      jumps: [{ from: 24.6913578 - 0.061 + 0.007, to: 12.3456789 - 0.061, fadeMs: 40 }],
+      before: { transient: 0, spectral: 0, harmony: null, quality: 0 },
+      after: { transient: 0, spectral: 0, harmony: null, quality: 0 },
+      bridge: null,
+    };
+    const original = { id: 'a', start: 12.3456789, end: 24.6913578, repeats: 3, color: '#123456', snapToBars: true };
+    const smoothed = withSeamPlan(original, plan);
+    expect(smoothed.seam).toBe(plan);
+    expect(isSmooth(smoothed)).toBe(true);
+    const undone = undoSmoothing(smoothed);
+    expect(undone.start).toBe(original.start);
+    expect(undone.end).toBe(original.end);
+    expect(undone.seam).toBeUndefined();
+    expect(isSmooth(undone)).toBe(false);
+    expect(undone).toEqual({ ...original, smooth: false });
+    // and it plays like the plain loop
+    expect(buildTimeline({ regions: [undone] }, 40)).toEqual(buildTimeline({ regions: [original] }, 40));
+    // a plan for other points is not attached
+    expect(withSeamPlan({ ...original, start: 13 }, plan).seam).toBeUndefined();
   });
 });

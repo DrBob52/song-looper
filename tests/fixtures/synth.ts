@@ -344,3 +344,69 @@ export const STATIC_SONG: Pick<ChordSongOptions, 'progressions' | 'structure'> =
   progressions: { A: 'C C C C' },
   structure: 'AAAAAA',
 };
+
+// ---------------------------------------------------------------------------
+// A drum pattern (kick on every beat, snare on 2 and 4) over an optional pad
+// ---------------------------------------------------------------------------
+
+function addSnare(out: Float32Array, start: number, amp: number, sampleRate: number, seed: number): void {
+  const len = Math.round(0.12 * sampleRate);
+  let x = (seed * 2654435761) >>> 0 || 1;
+  for (let i = 0; i < len && start + i < out.length; i++) {
+    x ^= x << 13;
+    x >>>= 0;
+    x ^= x >>> 17;
+    x ^= x << 5;
+    x >>>= 0;
+    const noise = x / 2147483648 - 1;
+    const t = i / sampleRate;
+    const body = Math.sin(2 * Math.PI * 190 * t) * Math.exp(-t / 0.05);
+    out[start + i]! += amp * (0.6 * noise * Math.exp(-t / 0.035) + 0.5 * body);
+  }
+}
+
+export interface DrumSongOptions {
+  bpm?: number;
+  seconds?: number;
+  sampleRate?: number;
+  /** A steady C major pad under the drums (default false: it confuses the tempo tracker). */
+  pad?: boolean;
+  /** Level over time in dB, applied to everything. */
+  envelopeDb?: (t: number) => number;
+}
+
+export interface DrumSong {
+  samples: Float32Array;
+  sampleRate: number;
+  bpm: number;
+  /** Attack times in seconds. */
+  kickTimes: number[];
+  snareTimes: number[];
+  /** All hits (kick and snare attacks), ascending. */
+  hitTimes: number[];
+}
+
+/** Kick on every beat and a snare on beats 2 and 4 of every bar, from time 0, over a steady pad. */
+export function drumSong(options: DrumSongOptions = {}): DrumSong {
+  const bpm = options.bpm ?? 120;
+  const seconds = options.seconds ?? 60;
+  const sampleRate = options.sampleRate ?? 22050;
+  const out = new Float32Array(Math.round(seconds * sampleRate));
+  const beat = 60 / bpm;
+  const kickTimes: number[] = [];
+  const snareTimes: number[] = [];
+  if (options.pad ?? false) for (const note of [48, 52, 55]) addHarmonics(out, 0, out.length, midiToHz(note), 'sine', 0.06, sampleRate);
+  for (let k = 0; k * beat < seconds - 0.2; k++) {
+    const t = k * beat;
+    kickTimes.push(t);
+    addKick(out, Math.round(t * sampleRate), k % 4 === 0 ? 0.8 : 0.6, sampleRate);
+    if (k % 2 === 1) {
+      snareTimes.push(t);
+      addSnare(out, Math.round(t * sampleRate), 0.1, sampleRate, k + 1);
+    }
+  }
+  if (options.envelopeDb) {
+    for (let i = 0; i < out.length; i++) out[i]! *= 10 ** (options.envelopeDb(i / sampleRate) / 20);
+  }
+  return { samples: out, sampleRate, bpm, kickTimes, snareTimes, hitTimes: [...kickTimes] };
+}

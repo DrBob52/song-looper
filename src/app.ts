@@ -1,11 +1,13 @@
 import { AnalysisClient, AnalysisSupersededError } from './analysis/client';
 import { ANALYSIS_CONFIG } from './analysis/config';
-import type { Analysis, AnalysisStage, AnalysisUpdate, SeamReport } from './analysis/types';
+import type { Analysis, AnalysisStage, AnalysisUpdate, SeamReport, SeamRequest } from './analysis/types';
 import { RENDER_CONFIG } from './audio/config';
 import { computePeaks, decodeFile, toMonoAnalysisRate } from './audio/decode';
 import type { DecodedSong } from './audio/decode';
 import { Player } from './audio/player';
-import { renderLoopBody, renderSeamSnippet } from './audio/preview';
+import { loopPath, cycleSeconds } from './audio/path';
+import { mapToSource, renderLoopBody, renderSeamSnippet } from './audio/preview';
+import type { PreviewRegion, SourceMapEntry } from './audio/preview';
 import {
   buildTimeline,
   extendedDuration,
@@ -22,9 +24,9 @@ import { estimateWavSize } from './audio/wav';
 import { saveWav, warmUpSave } from './audio/save';
 import { barsBetween, emptyGrid, makeGrid, snapTime } from './grid';
 import type { Grid } from './grid';
-import type { LoopRegion, Plan, Span } from './model';
+import type { LoopRegion, Plan, SeamPlan, Span } from './model';
 import { MAX_EXTENDED_SECONDS } from './model';
-import { MIN_REGION_SECONDS, fitSpan, neighbourBounds, newRegionId, nextColor, sortRegions } from './plan';
+import { MIN_REGION_SECONDS, fitSpan, isSmooth, neighbourBounds, newRegionId, nextColor, sortRegions, undoSmoothing, withSeamPlan } from './plan';
 import { AnalysisControls } from './ui/analysisControls';
 import { Dropzone } from './ui/dropzone';
 import { h } from './ui/dom';
@@ -74,6 +76,12 @@ function seamKey(r: { start: number; end: number }): string {
   return `${r.start.toFixed(6)}|${r.end.toFixed(6)}`;
 }
 
+/** Identifies everything a seam request depends on: the points, the smoothing switch and the room to move. */
+function requestKey(q: SeamRequest): string {
+  const f = (v: number | undefined): string => (v === undefined ? '' : v.toFixed(6));
+  return [f(q.start), f(q.end), q.smooth === false ? 'raw' : 'smooth', f(q.minStart), f(q.maxEnd)].join('|');
+}
+
 /** Overall analysis progress (0..1) from a stage and the progress within it. */
 function overallProgress(stage: AnalysisStage, pct: number): number {
   const bands: Record<AnalysisStage, [number, number]> = {
@@ -93,9 +101,10 @@ function stageLabel(stage: AnalysisStage): string {
   return 'Ranking loops\u2026';
 }
 
+/** What is playing in the aux player, with where each stretch of it comes from in the song (for the cursor). */
 type AuxInfo =
-  | { kind: 'loop'; originalStart: number; period: number }
-  | { kind: 'seam'; region: Span; seamTime: number };
+  | { kind: 'loop'; map: SourceMapEntry[]; sampleRate: number; period: number }
+  | { kind: 'seam'; map: SourceMapEntry[]; sampleRate: number };
 
 export class App {
   readonly store = createStore<AppState>({
@@ -144,8 +153,9 @@ export class App {
   private timeline = buildTimeline({ regions: [] }, 0);
   private aux: AuxInfo | null = null;
   private seamTimer = 0;
-  /** Points of each loop that a seam report was last requested for (by region id). */
+  /** What each loop's seam report was last requested for (by region id), see requestKey. */
   private seamKeys = new Map<string, string>();
+  private seamInFlight: Promise<void> | null = null;
 
   constructor(private root: HTMLElement) {
     this.dropzone = new Dropzone((f) => void this.loadFile(f));
@@ -169,6 +179,9 @@ export class App {
       onSnapToggle: (id, v) => this.updateRegion(id, { snapToBars: v }),
       onPreviewLoop: (id) => void this.previewLoop(id),
       onAuditionSeam: (id) => void this.auditionSeam(id),
+      onAuditionOriginal: (id) => void this.auditionSeam(id, true),
+      onSmoothToggle: (id, on) => this.setSmooth(id, on),
+      onUndoSeam: (id) => this.undoSeam(id),
       onRemove: (id) => this.removeRegion(id),
       onHover: (id) => {
         const r = id ? this.store.get().regions.find((x) => x.id === id) : undefined;
@@ -578,41 +591,112 @@ export class App {
 
   // ---- seam reports ------------------------------------------------------------
 
-  /** Ask the analysis worker how the loops' seams sound, shortly after the loops or the analysis change. */
-  private scheduleSeamReports(): void {
-    window.clearTimeout(this.seamTimer);
-    this.seamTimer = window.setTimeout(() => void this.runSeamReports(), 120);
+  private requestFor(r: LoopRegion, regions: readonly LoopRegion[], duration: number): SeamRequest {
+    const room = neighbourBounds(regions, r.id, duration);
+    return { id: r.id, start: r.start, end: r.end, smooth: isSmooth(r), minStart: room.start, maxEnd: room.end };
   }
 
-  private async runSeamReports(): Promise<void> {
-    const { regions, analysis, analysisState, seams } = this.store.get();
-    // forget reports of loops that are gone
+  /** Does any loop need a (new) seam report? */
+  private needsSeamReports(): boolean {
+    const { regions, analysis, analysisState, song } = this.store.get();
+    if (!song || !analysis || analysis.silent || analysisState === 'running') return false;
+    return regions.some((r) => this.seamKeys.get(r.id) !== requestKey(this.requestFor(r, regions, song.duration)));
+  }
+
+  /** Ask the analysis worker how the loops' seams sound and how to smooth them, shortly after the loops or the analysis change. */
+  private scheduleSeamReports(): void {
+    window.clearTimeout(this.seamTimer);
+    this.seamTimer = 0;
+    if (!this.needsSeamReports() && !this.pruneSeams(false)) return;
+    this.seamTimer = window.setTimeout(() => {
+      this.seamTimer = 0;
+      void this.runSeamReports();
+    }, 120);
+  }
+
+  /** Forget the reports of loops that are gone. Returns whether anything is left to forget (or was, when `apply`). */
+  private pruneSeams(apply: boolean): boolean {
+    const { regions, seams } = this.store.get();
     const ids = new Set(regions.map((r) => r.id));
     for (const id of [...this.seamKeys.keys()]) if (!ids.has(id)) this.seamKeys.delete(id);
-    if (Object.keys(seams).some((id) => !ids.has(id))) {
-      this.store.set({ seams: Object.fromEntries(Object.entries(seams).filter(([id]) => ids.has(id))) });
-    }
-    if (!analysis || analysis.silent || analysisState === 'running' || regions.length === 0) return;
-    const stale = regions.filter((r) => this.seamKeys.get(r.id) !== seamKey(r));
-    if (stale.length === 0) return;
-    for (const r of stale) this.seamKeys.set(r.id, seamKey(r));
+    const gone = Object.keys(seams).filter((id) => !ids.has(id));
+    if (gone.length && apply) this.store.set({ seams: Object.fromEntries(Object.entries(seams).filter(([id]) => ids.has(id))) });
+    return gone.length > 0;
+  }
+
+  private runSeamReports(): Promise<void> {
+    this.seamInFlight = this.doSeamReports().finally(() => {
+      this.seamInFlight = null;
+    });
+    return this.seamInFlight;
+  }
+
+  private async doSeamReports(): Promise<void> {
+    this.pruneSeams(true);
+    if (!this.needsSeamReports()) return;
+    const { regions, song } = this.store.get();
+    if (!song) return;
+    const requests = regions.map((r) => this.requestFor(r, regions, song.duration));
+    for (const q of requests) this.seamKeys.set(q.id, requestKey(q));
     const token = this.loadToken;
     try {
-      const reports = await this.analysisClient.seamReport(
-        regions.map((r) => ({ id: r.id, start: r.start, end: r.end })),
-      );
+      const reports = await this.analysisClient.seamReport(requests);
       if (token !== this.loadToken) return;
-      const now = this.store.get();
-      const next = { ...now.seams };
-      for (const report of reports) {
-        const region = now.regions.find((r) => r.id === report.id);
-        if (region && seamKey(region) === seamKey(report)) next[report.id] = report;
-      }
-      this.store.set({ seams: next });
+      this.applySeamReports(requests, reports);
     } catch (err) {
       if (err instanceof AnalysisSupersededError) return;
-      // A failed report only means there is no chip.
-      for (const r of stale) this.seamKeys.delete(r.id);
+      // A failed report only means there is no chip and no smoothing.
+      for (const q of requests) this.seamKeys.delete(q.id);
+    }
+  }
+
+  /** Keep each report (and the seam plan in it) that still fits its loop: same points, same switches, same room. */
+  private applySeamReports(requests: SeamRequest[], reports: SeamReport[]): void {
+    const now = this.store.get();
+    if (!now.song) return;
+    const sent = new Map(requests.map((q) => [q.id, requestKey(q)]));
+    const seams = { ...now.seams };
+    let regionsChanged = false;
+    const regions = now.regions.map((r) => {
+      const report = reports.find((x) => x.id === r.id);
+      if (!report || sent.get(r.id) !== requestKey(this.requestFor(r, now.regions, now.song!.duration))) return r;
+      seams[r.id] = report;
+      const next = report.plan && isSmooth(r) ? withSeamPlan(r, report.plan) : r;
+      if (next !== r) regionsChanged = true;
+      return next;
+    });
+    this.store.set({ seams });
+    if (regionsChanged) this.commitRegions(regions);
+  }
+
+  /** Resolves once every loop's seam plan is in (so that previews and the export use what the user sees). */
+  async seamsSettled(): Promise<void> {
+    for (let i = 0; i < 4; i++) {
+      if (this.seamTimer) {
+        window.clearTimeout(this.seamTimer);
+        this.seamTimer = 0;
+        await this.runSeamReports();
+      } else if (this.seamInFlight) {
+        await this.seamInFlight;
+      } else if (this.needsSeamReports()) {
+        await this.runSeamReports();
+      } else return;
+    }
+  }
+
+  /** The seam plan for an arbitrary span (a suggestion), computed by the worker; null when smoothing cannot be done. */
+  private async planFor(id: string, span: Span): Promise<SeamPlan | null> {
+    const { analysis, song, regions } = this.store.get();
+    if (!analysis || analysis.silent || !song) return null;
+    try {
+      const room = neighbourBounds(regions, '', song.duration);
+      const [report] = await this.analysisClient.seamReport(
+        [{ id, start: span.start, end: span.end, smooth: true, minStart: room.start, maxEnd: room.end }],
+        'preview',
+      );
+      return report?.plan ?? null;
+    } catch {
+      return null;
     }
   }
 
@@ -628,7 +712,11 @@ export class App {
     const { song, lengthMode, targetSeconds } = this.store.get();
     let next = sortRegions(regions);
     if (song && lengthMode === 'target' && next.length > 0) {
-      const res = solveRepeats(next, song.duration, targetSeconds);
+      const res = solveRepeats(
+        next.map((r) => ({ start: r.start, end: r.end, score: r.score, extra: cycleSeconds(loopPath(r)) - (r.end - r.start) })),
+        song.duration,
+        targetSeconds,
+      );
       next = next.map((r, i) => (r.repeats === res.repeats[i] ? r : { ...r, repeats: res.repeats[i]! }));
     }
     this.store.set({ regions: next, ...extra });
@@ -724,7 +812,27 @@ export class App {
       next.start = fit.start;
       next.end = fit.end;
     }
+    // What the seam smoother decided belongs to the points and switches it was computed for.
+    if (patch.start !== undefined || patch.end !== undefined || patch.smooth !== undefined || patch.bridge !== undefined) {
+      delete next.seam;
+      this.seamKeys.delete(id); // a new plan has to be asked for
+    }
     this.commitRegions(regions.map((r) => (r.id === id ? next : r)));
+  }
+
+  /** The Smooth seam checkbox of a loop. Turning it off is the same as Undo. */
+  setSmooth(id: string, on: boolean): void {
+    this.updateRegion(id, { smooth: on });
+  }
+
+  /** Undo (SPEC-seams.md 3.5): the loop plays exactly as its points say, and smoothing stays off for it. */
+  undoSeam(id: string): void {
+    const { regions } = this.store.get();
+    if (!regions.some((r) => r.id === id)) return;
+    this.seamKeys.delete(id);
+    this.commitRegions(regions.map((r) => (r.id === id ? undoSmoothing(r) : r)));
+    // the chip goes back to the raw seam
+    this.scheduleSeamReports();
   }
 
   private setRepeats(id: string, repeats: number): void {
@@ -855,22 +963,38 @@ export class App {
 
   async previewLoop(id: string): Promise<void> {
     const region = this.store.get().regions.find((r) => r.id === id);
-    if (region) await this.previewSpan(id, region, true);
+    if (!region) return;
+    await this.seamsSettled();
+    const now = this.store.get().regions.find((r) => r.id === id);
+    if (now) await this.previewSpan(id, now, true);
   }
 
-  async auditionSeam(id: string): Promise<void> {
+  /** Hear the jump back to the loop's start, smoothed as the export will have it, or with `original` as the raw seam. */
+  async auditionSeam(id: string, original = false): Promise<void> {
     const region = this.store.get().regions.find((r) => r.id === id);
-    if (region) await this.auditionSpan(id, region);
+    if (!region) return;
+    await this.seamsSettled();
+    const now = this.store.get().regions.find((r) => r.id === id);
+    if (!now) return;
+    // the raw seam: the user's own points with the global crossfade, no smoothing and no bridge
+    await this.auditionSpan(id, original ? { start: now.start, end: now.end } : now);
   }
 
   async previewCandidate(index: number): Promise<void> {
     const c = this.store.get().analysis?.candidates[index];
-    if (c) await this.previewSpan(suggestionKey(index), c, false);
+    if (!c) return;
+    const key = suggestionKey(index);
+    if (this.store.get().previewingId === key) return this.previewSpan(key, c, false);
+    const seam = await this.planFor(key, c);
+    await this.previewSpan(key, { start: c.start, end: c.end, ...(seam ? { seam } : {}) }, false);
   }
 
   async auditionCandidate(index: number): Promise<void> {
     const c = this.store.get().analysis?.candidates[index];
-    if (c) await this.auditionSpan(suggestionKey(index), c);
+    if (!c) return;
+    const key = suggestionKey(index);
+    const seam = await this.planFor(key, c);
+    await this.auditionSpan(key, { start: c.start, end: c.end, ...(seam ? { seam } : {}) });
   }
 
   addCandidate(index: number): void {
@@ -879,8 +1003,8 @@ export class App {
     this.addLoop({ start: c.start, end: c.end }, { score: c.score });
   }
 
-  /** Hear a span looping, rendered exactly as the export would (same seam crossfade). Toggles. */
-  private async previewSpan(key: string, span: Span, select: boolean): Promise<void> {
+  /** Hear a span looping, rendered exactly as the export would (same seam, bridge and crossfade). Toggles. */
+  private async previewSpan(key: string, span: PreviewRegion, select: boolean): Promise<void> {
     const { song, seamMs, previewingId } = this.store.get();
     if (!song) return;
     if (previewingId === key) {
@@ -897,14 +1021,14 @@ export class App {
       return;
     }
     const dur = body.channels[0]!.length / body.sampleRate;
-    this.aux = { kind: 'loop', originalStart: body.originalStart, period: dur };
+    this.aux = { kind: 'loop', map: body.map, sampleRate: body.sampleRate, period: dur };
     this.store.set(select ? { previewingId: key, selectedId: key } : { previewingId: key });
     await this.player.playAux(body, { loopStart: 0, loopEnd: dur, offset: 0 });
     if (this.aux?.kind === 'loop' && this.store.get().previewingId === key) this.stopAux();
   }
 
   /** Hear the jump from the span's end back to its start. */
-  private async auditionSpan(key: string, span: Span): Promise<void> {
+  private async auditionSpan(key: string, span: PreviewRegion): Promise<void> {
     const { song, seamMs } = this.store.get();
     if (!song) return;
     this.stopAux();
@@ -916,7 +1040,7 @@ export class App {
       this.notify(err instanceof Error ? err.message : String(err));
       return;
     }
-    this.aux = { kind: 'seam', region: { start: span.start, end: span.end }, seamTime: snip.seamIndex / snip.sampleRate };
+    this.aux = { kind: 'seam', map: snip.map, sampleRate: snip.sampleRate };
     if (this.store.get().regions.some((r) => r.id === key)) this.store.set({ selectedId: key });
     await this.player.playAux(snip);
     this.aux = null;
@@ -951,8 +1075,10 @@ export class App {
   }
 
   private async doExport(opts: { filename: string; bitDepth: 16 | 24 | 32; applySpeedPitch: boolean }): Promise<void> {
-    const { seamMs, speed, pitch } = this.store.get();
     this.exportDialog.setProgress('Rendering…', 0);
+    // what the export plays is what the preview played: every loop's seam plan is in first
+    await this.seamsSettled();
+    const { seamMs, speed, pitch } = this.store.get();
     const stretch = opts.applySpeedPitch ? { tempo: speed, pitchSemitones: pitch } : null;
     const blob = await this.renderClient.export(
       this.plan(),
@@ -983,9 +1109,8 @@ export class App {
     if (!song) return;
     if (this.player.isAuxPlaying() && this.aux) {
       const t = this.player.getAuxTime();
-      let orig: number;
-      if (this.aux.kind === 'loop') orig = this.aux.originalStart + (t % this.aux.period);
-      else orig = t < this.aux.seamTime ? this.aux.region.end - (this.aux.seamTime - t) : this.aux.region.start + (t - this.aux.seamTime);
+      const at = this.aux.kind === 'loop' ? t % this.aux.period : t;
+      const orig = mapToSource(this.aux.map, Math.round(at * this.aux.sampleRate), this.aux.sampleRate);
       this.transport.setTime(orig, song.duration);
       this.waveform?.setCursor(orig, true);
       this.timelineStrip.setPosition(originalToExtended(this.timeline, orig));

@@ -1,3 +1,5 @@
+import type { SeamPlan } from '../model';
+
 export interface Section {
   start: number;
   end: number;
@@ -91,6 +93,11 @@ export interface SeamRequest {
   id: string;
   start: number;
   end: number;
+  /** Smooth the seam (rotate, align, pick the fade, match levels). Default true. */
+  smooth?: boolean;
+  /** The loop's edges may move within [minStart, maxEnd] (the free space around it). Default: the whole song. */
+  minStart?: number;
+  maxEnd?: number;
 }
 
 export interface SeamReport {
@@ -100,10 +107,15 @@ export interface SeamReport {
   end: number;
   /** Is there a beat grid (so harmony and bar positions mean something)? */
   hasGrid: boolean;
-  /** Harmony of the seam, or null without a beat grid. */
+  /** Harmony of the seam as it will play (after smoothing), or null without a beat grid. */
   harmony: number | null;
   /** Context match of the two edges (SPEC-seams.md 6), or null without a beat grid. */
   contextMatch: number | null;
+  /** The seam as it will play. */
   scores: SeamScores;
+  /** The raw seam at the loop's own points, for comparison. */
+  before: SeamScores;
   chip: SeamChip;
+  /** How to play the loop (rotation, alignment, fade, level); null when smoothing is off. */
+  plan: SeamPlan | null;
 }

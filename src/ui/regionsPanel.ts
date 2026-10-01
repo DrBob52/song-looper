@@ -1,9 +1,11 @@
 import type { SeamReport } from '../analysis/types';
 import type { LoopRegion } from '../model';
 import { MAX_REPEATS } from '../model';
+import { currentSeam } from '../audio/path';
+import { isSmooth } from '../plan';
 import { formatTime } from '../util/time';
 import { h } from './dom';
-import { chipLabel, chipTitle } from './seamText';
+import { chipLabel, chipTitle, seamSummary } from './seamText';
 
 export interface RegionsPanelCallbacks {
   onAdd(): void;
@@ -12,6 +14,11 @@ export interface RegionsPanelCallbacks {
   onSnapToggle(id: string, snapToBars: boolean): void;
   onPreviewLoop(id: string): void;
   onAuditionSeam(id: string): void;
+  /** Play the raw seam (the loop as the user set it, no smoothing, no bridge) for A/B comparison. */
+  onAuditionOriginal(id: string): void;
+  onSmoothToggle(id: string, on: boolean): void;
+  /** Restore the original seam and turn smoothing off for the loop. */
+  onUndoSeam(id: string): void;
   onRemove(id: string): void;
   onHover(id: string | null): void;
 }
@@ -41,6 +48,10 @@ interface Row {
   loopBtn: HTMLButtonElement;
   seam: HTMLElement;
   chip: HTMLElement;
+  smooth: HTMLInputElement;
+  summary: HTMLElement;
+  summaryText: HTMLElement;
+  undo: HTMLButtonElement;
 }
 
 /** The user's loop regions, each with its own repeat count. Rows are updated in place (keyed by id). */
@@ -118,6 +129,11 @@ export class RegionsPanel {
         row.chip.title = chipTitle(report);
         row.chip.setAttribute('aria-label', `Seam: ${chipLabel(report.chip)}`);
       }
+      const smooth = isSmooth(region);
+      row.smooth.checked = smooth;
+      const plan = currentSeam(region);
+      row.summary.hidden = !(smooth && plan);
+      if (smooth && plan) row.summaryText.textContent = seamSummary(plan);
       const previewing = info.previewingId === region.id;
       row.loopBtn.textContent = previewing ? 'Stop' : 'Loop';
       row.loopBtn.classList.toggle('active', previewing);
@@ -170,8 +186,34 @@ export class RegionsPanel {
     const seamBtn = h('button', {
       class: 'btn sm',
       text: 'Audition seam',
-      attrs: { type: 'button', 'data-testid': 'audition-seam', title: 'Hear the jump from the loop end back to its start' },
+      attrs: { type: 'button', 'data-testid': 'audition-seam', title: 'Hear the jump from the loop end back to its start, as the export will have it' },
       on: { click: () => this.cb.onAuditionSeam(id) },
+    });
+    const smooth = h('input', {
+      attrs: { type: 'checkbox', 'data-testid': 'smooth-toggle', checked: true },
+      on: { change: () => this.cb.onSmoothToggle(id, smooth.checked) },
+    });
+    const summaryText = h('span', { attrs: { 'data-testid': 'seam-summary' } });
+    const undo = h('button', {
+      class: 'btn sm',
+      text: 'Undo',
+      attrs: {
+        type: 'button',
+        'data-testid': 'seam-undo',
+        title: 'Go back to the seam as it was: smoothing is turned off for this loop',
+      },
+      on: { click: () => this.cb.onUndoSeam(id) },
+    });
+    const summary = h('div', { class: 'seam-summary small', attrs: { hidden: true } }, [summaryText, undo]);
+    const originalBtn = h('button', {
+      class: 'btn sm',
+      text: 'Hear original',
+      attrs: {
+        type: 'button',
+        'data-testid': 'audition-original',
+        title: 'Play the seam as you set it, without smoothing, to compare',
+      },
+      on: { click: () => this.cb.onAuditionOriginal(id) },
     });
     const chip = h('span', { class: 'chip', attrs: { 'data-testid': 'seam-chip' } });
     const seam = h('span', { class: 'seam-status', attrs: { hidden: true } }, [
@@ -202,15 +244,21 @@ export class RegionsPanel {
           h('div', { class: 'region-controls' }, [
             h('span', { class: 'field' }, [h('span', { text: 'Repeats' }), dec, repeats, inc]),
             h('label', { class: 'field' }, [snap, h('span', { text: 'Snap to bars' })]),
+            h('label', { class: 'field', attrs: { title: 'Move the seam by up to a beat, line up the end, pick the fade and match levels' } }, [
+              smooth,
+              h('span', { text: 'Smooth seam' }),
+            ]),
             h('span', { class: 'spacer' }),
             loopBtn,
             seamBtn,
+            originalBtn,
             removeBtn,
           ]),
+          summary,
         ]),
       ],
     );
-    return { el, swatch, title, times, meta, repeats, dec, inc, snap, loopBtn, seam, chip };
+    return { el, swatch, title, times, meta, repeats, dec, inc, snap, loopBtn, seam, chip, smooth, summary, summaryText, undo };
   }
 }
 

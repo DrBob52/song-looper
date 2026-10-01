@@ -1,4 +1,5 @@
 import type { SeamChip, SeamReport, SeamScores } from '../analysis/types';
+import type { SeamPlan } from '../model';
 
 export function chipLabel(chip: SeamChip): string {
   return chip === 'clean' ? 'Clean' : chip === 'ok' ? 'OK' : 'Rough';
@@ -20,7 +21,25 @@ export function harmonyText(harmony: number | null): string {
   return 'The song comes close to this chord change.';
 }
 
-/** Tooltip of the Seam chip. */
+/** Tooltip of the Seam chip: the scores after smoothing, and before it when the smoother changed the seam. */
 export function chipTitle(report: SeamReport): string {
-  return `Seam ${scoresText(report.scores)}. ${harmonyText(report.harmony)}`;
+  const after = `Seam ${scoresText(report.scores)}`;
+  const changed = report.plan && Math.abs(report.before.quality - report.scores.quality) >= 0.005;
+  const compare = changed ? ` Before smoothing: ${scoresText(report.before)}.` : '';
+  return `${after}.${compare} ${harmonyText(report.harmony)}`;
+}
+
+const signedMs = (seconds: number): string => {
+  const ms = Math.round(seconds * 1000);
+  return `${ms > 0 ? '+' : ms < 0 ? '\u2212' : ''}${Math.abs(ms)} ms`;
+};
+
+/** The one-line summary of what the smoother did, e.g. "Seam moved +61 ms · aligned +7 ms · fade 40 ms". */
+export function seamSummary(plan: SeamPlan): string {
+  const parts: string[] = [Math.abs(plan.shift) < 0.0005 ? 'Seam kept' : `Seam moved ${signedMs(plan.shift)}`];
+  if (Math.abs(plan.align) >= 0.0005) parts.push(`aligned ${signedMs(plan.align)}`);
+  const jump = plan.jumps[plan.jumps.length - 1];
+  if (jump?.fadeMs !== undefined) parts.push(`fade ${Math.round(jump.fadeMs)} ms`);
+  if (jump?.levelDb) parts.push(`level ${jump.levelDb > 0 ? '+' : '\u2212'}${Math.abs(jump.levelDb).toFixed(1)} dB`);
+  return parts.join(' \u00b7 ');
 }

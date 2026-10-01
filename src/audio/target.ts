@@ -5,6 +5,8 @@ export interface TargetRegion {
   end: number;
   /** Suggestion score (0..1). Regions without one are weighted by the average of the others. */
   score?: number;
+  /** Seconds that each repeat adds on top of `end - start`: a bridge, or the few ms the end edge was aligned by. */
+  extra?: number;
 }
 
 export interface TargetResult {
@@ -29,7 +31,7 @@ const total = (lens: number[], reps: number[], duration: number): number =>
  */
 export function solveRepeats(regions: readonly TargetRegion[], duration: number, target: number): TargetResult {
   const n = regions.length;
-  const lens = regions.map((r) => Math.max(1e-6, r.end - r.start));
+  const lens = regions.map((r) => Math.max(1e-6, r.end - r.start + (r.extra ?? 0)));
   let reps = new Array<number>(n).fill(1);
   const extra = target - duration;
   if (n === 0 || extra <= 0) {

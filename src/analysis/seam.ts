@@ -71,6 +71,7 @@ export interface SeamInputs {
  */
 export class SeamAnalyzer {
   private typicalByBucket: Float32Array | null = null;
+  private levels: Float32Array | null = null;
   private typicalAll = 0;
   private hitRef = 0;
   private readonly bands: number;
@@ -140,6 +141,12 @@ export class SeamAnalyzer {
     return Math.max(0, Math.min(1, Math.min(1, ahead) - c.behindWeight * Math.min(1, behind)));
   }
 
+  /** 1 when a typical strong hit lies anywhere near `t` (a little before to a little after): which positions are worth a closer look. */
+  transientNear(t: number): number {
+    const [before, after] = this.cfg.transient.nearMs;
+    return Math.min(1, this.flux(t - before / 1000, t + after / 1000) / this.hitReference());
+  }
+
   // ---- spectral continuity ------------------------------------------------------
 
   private frameAt(t: number): number {
@@ -201,6 +208,43 @@ export class SeamAnalyzer {
   /** 1 - min(1, seamFlux / (2 * typicalFlux)): a seam as smooth as the song's own cuts scores 0.5, a seamless one 1. */
   spectralContinuity(end: number, start: number): number {
     return 1 - Math.min(1, this.seamFlux(end, start) / (2 * this.typicalFlux(start)));
+  }
+
+  // ---- level --------------------------------------------------------------------
+
+  /** Mean-square level of each beat in dB (from the analysis frames). */
+  beatLevels(): Float32Array {
+    if (this.levels) return this.levels;
+    const { beats } = this.inputs;
+    const { energy, frameRate, frames } = this.inputs.frames;
+    const out = new Float32Array(beats.length);
+    for (let i = 0; i < beats.length; i++) {
+      const t1 = i + 1 < beats.length ? beats[i + 1]! : beats[i]! + (i > 0 ? beats[i]! - beats[i - 1]! : 0.5);
+      const f0 = Math.max(0, Math.min(frames - 1, Math.round(beats[i]! * frameRate)));
+      const f1 = Math.max(f0 + 1, Math.min(frames, Math.round(t1 * frameRate)));
+      let e = 0;
+      for (let f = f0; f < f1; f++) e += energy[f]!;
+      out[i] = 10 * Math.log10(e / (f1 - f0) + 1e-12);
+    }
+    this.levels = out;
+    return out;
+  }
+
+  /**
+   * How much louder (dB) the song itself makes the beat at the bar position of `y` than the beat at the position of
+   * `x`, going forward from `x` (the median over the whole song): its accent pattern. A seam from beat `x` to beat `y`
+   * has that step for free; only the excess over it is a level jump. 0 without a beat grid.
+   */
+  accentStep(x: number, y: number): number {
+    if (!this.hasGrid) return 0;
+    const bpb = Math.max(1, this.inputs.beatsPerBar);
+    const gap = (((y - x) % bpb) + bpb) % bpb || bpb; // beats from x to the next beat at y's bar position
+    const lv = this.beatLevels();
+    const steps: number[] = [];
+    for (let i = ((x % bpb) + bpb) % bpb; i + gap < lv.length; i += bpb) steps.push(lv[i + gap]! - lv[i]!);
+    if (steps.length < 3) return 0;
+    steps.sort((p, q) => p - q);
+    return steps[steps.length >> 1]!;
   }
 
   // ---- harmony ------------------------------------------------------------------

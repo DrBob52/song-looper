@@ -14,7 +14,7 @@ export class FluxAccumulator {
 
   constructor(
     private bins: number,
-    private gamma = ANALYSIS_CONFIG.onset.logGain,
+    private gamma: number = ANALYSIS_CONFIG.onset.logGain,
   ) {}
 
   push(mags: Float32Array): number {

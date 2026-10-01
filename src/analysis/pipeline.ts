@@ -8,6 +8,7 @@ import type { BeatFeatures, FrameData } from './features';
 import { buildHarmonyModel, chromaSimilarity } from './harmony';
 import type { ChromaSimilarity, HarmonyModel } from './harmony';
 import { SeamAnalyzer, chipFor, nearestBeat } from './seam';
+import { smoothSeam } from './smooth';
 import { findSections } from './sections';
 import { selfSimilarity } from './ssm';
 import type { SelfSimilarity } from './ssm';
@@ -192,11 +193,21 @@ export class AnalysisSession {
     if (!tool) return [];
     const ssm = this.ssm;
     return requests.map((req) => {
-      const scores = tool.scores(req.start, req.end);
+      const before = tool.scores(req.start, req.end);
+      const plan =
+        req.smooth === false
+          ? null
+          : smoothSeam(tool, this.samples, this.sampleRate, {
+              start: req.start,
+              end: req.end,
+              minStart: req.minStart,
+              maxEnd: req.maxEnd,
+            });
+      const scores = plan ? plan.after : before;
       let context: number | null = null;
       if (tool.hasGrid && ssm) {
-        const a = nearestBeat(this.beatTimes, req.start);
-        const b = nearestBeat(this.beatTimes, req.end);
+        const a = nearestBeat(this.beatTimes, plan ? plan.loopStart : req.start);
+        const b = nearestBeat(this.beatTimes, plan ? plan.loopEnd : req.end);
         if (b > a) context = contextMatch(ssm, a, b);
       }
       return {
@@ -207,7 +218,9 @@ export class AnalysisSession {
         harmony: scores.harmony,
         contextMatch: context,
         scores,
+        before,
         chip: chipFor(scores.quality),
+        plan,
       };
     });
   }

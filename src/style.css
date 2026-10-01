@@ -522,6 +522,18 @@ kbd {
   color: var(--danger);
 }
 
+.seam-summary {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 4px 10px;
+  color: var(--muted);
+}
+
+.seam-summary[hidden] {
+  display: none;
+}
+
 input.num {
   width: 4.2em;
   text-align: center;
