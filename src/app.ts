@@ -34,13 +34,14 @@ import { ExportDialog } from './ui/exportDialog';
 import { LengthPanel } from './ui/lengthPanel';
 import type { LengthMode } from './ui/lengthPanel';
 import { RegionsPanel } from './ui/regionsPanel';
+import type { Edge, EdgeEdit } from './ui/regionsPanel';
 import { SuggestionsPanel, suggestionKey } from './ui/suggestionsPanel';
 import { TimelineStrip } from './ui/timelineStrip';
 import { Transport } from './ui/transport';
 import type { PlayMode } from './ui/transport';
 import { SELECTION_ID, WaveformView } from './ui/waveform';
 import { formatChannels, formatRate } from './util/format';
-import { formatTime } from './util/time';
+import { formatClock, formatTime, roundMs } from './util/time';
 import { createStore } from './util/store';
 
 export interface AppState {
@@ -178,6 +179,7 @@ export class App {
       onAdd: () => this.addLoop(),
       onSelect: (id) => this.selectRegion(id),
       onRepeats: (id, n) => this.setRepeats(id, n),
+      onEditEdge: (id, edge, edit) => this.editLoopEdge(id, edge, edit),
       onSnapToggle: (id, v) => this.updateRegion(id, { snapToBars: v }),
       onPreviewLoop: (id) => void this.previewLoop(id),
       onAuditionSeam: (id) => void this.auditionSeam(id),
@@ -233,10 +235,14 @@ export class App {
           toolbar,
           this.analysisControls.el,
           this.waveHost,
-          h('div', { class: 'wave-hint' }, [
+          h('div', { class: 'wave-hint', attrs: { 'data-testid': 'wave-hint' } }, [
             'Click to seek. Drag on the waveform to select a span, then press ',
             h('kbd', { text: 'L' }),
             ' to add a loop. ',
+            h('kbd', { text: 'I' }),
+            ' and ',
+            h('kbd', { text: 'O' }),
+            ' set the start and end of the selected loop (or of the selection) to the playhead. ',
             h('kbd', { text: 'Space' }),
             ' play/pause, ',
             h('kbd', { text: 'Delete' }),
@@ -296,6 +302,7 @@ export class App {
       this.regionsPanel.update(s.regions, s.selectedId, {
         barsOf: (r) => barsBetween(s.grid, r.start, r.end),
         hasGrid: s.grid.beats.length > 0,
+        steadyBeat: s.grid.steady,
         previewingId: s.previewingId,
         repeatsLocked: s.lengthMode === 'target',
         seamOf: (r) => {
@@ -431,6 +438,9 @@ export class App {
     } else if (e.key === 'l' || e.key === 'L') {
       e.preventDefault();
       this.addLoop();
+    } else if (e.key === 'i' || e.key === 'I' || e.key === 'o' || e.key === 'O') {
+      e.preventDefault();
+      this.markFromPlayhead(e.key === 'i' || e.key === 'I' ? 'start' : 'end');
     } else if (e.key === 'Delete' || e.key === 'Backspace') {
       const { selectedId, selection } = this.store.get();
       if (selectedId) {
@@ -735,9 +745,23 @@ export class App {
 
   // ---- regions -----------------------------------------------------------------
 
-  private playheadOriginalTime(): number {
+  /** Where the playhead is in the original song, whatever is playing (the song, the extended cut or a preview). */
+  private originalPlayhead(): number {
+    const { playMode } = this.store.get();
+    if (this.player.isAuxPlaying() && this.aux) {
+      const t = this.player.getAuxTime();
+      const at = this.aux.kind === 'loop' ? t % this.aux.period : t;
+      return mapToSource(this.aux.map, Math.round(at * this.aux.sampleRate), this.aux.sampleRate);
+    }
     const t = this.player.getTime();
-    return this.store.get().playMode === 'extended' ? extendedToOriginal(this.timeline, t).time : t;
+    return playMode === 'extended' ? extendedToOriginal(this.timeline, t).time : t;
+  }
+
+  /** Length of a new loop that has no span of its own: 4 bars, or 8 s when there are no bars (never over half the song). */
+  private defaultLoopSeconds(): number {
+    const { grid, song } = this.store.get();
+    const duration = song?.duration ?? 8;
+    return grid.steady ? Math.min(4 * grid.barSeconds, duration / 2) : Math.min(8, duration / 2);
   }
 
   /** Set the regions, computing repeat counts from the target length when in target mode. */
@@ -801,12 +825,16 @@ export class App {
     const { grid } = this.store.get();
     let want = span ?? selection;
     if (!want) {
-      const at = this.playheadOriginalTime();
+      const at = this.originalPlayhead();
+      const len = this.defaultLoopSeconds();
       if (grid.steady) {
-        const start = snapTime(grid, at, true);
-        want = { start, end: Math.min(song.duration, start + 4 * grid.barSeconds) };
+        let start = snapTime(grid, at, true);
+        // near the end of the song the loop ends there and starts one default length before it
+        if (start + len > song.duration) start = snapTime(grid, Math.max(0, song.duration - len), true);
+        want = { start, end: Math.min(song.duration, start + len) };
       } else {
-        want = { start: at, end: Math.min(song.duration, at + Math.min(8, song.duration / 4)) };
+        const start = Math.min(at, Math.max(0, song.duration - len));
+        want = { start, end: Math.min(song.duration, start + len) };
       }
     }
     const fit = fitSpan(regions, want, song.duration, MIN_REGION_SECONDS);
@@ -855,7 +883,102 @@ export class App {
 
   /** The Smooth seam checkbox of a loop. Turning it off is the same as Undo. */
   setSmooth(id: string, on: boolean): void {
-    this.updateRegion(id, { smooth: on });
+    // switching it back on hands the join to the smoother again, so the points are no longer "exactly as typed"
+    this.updateRegion(id, on ? { smooth: true, exact: false } : { smooth: false });
+  }
+
+  // ---- exact loop times (SPEC-v1.2.md 1) -------------------------------------------
+
+  /** Length of the analysed beat starting at `t` (dir 1) or ending at it (dir -1), or null when there is no steady beat. */
+  private beatLengthAt(t: number, dir: 1 | -1): number | null {
+    const { grid } = this.store.get();
+    if (!grid.steady || grid.beats.length < 2) return null;
+    const beats = grid.beats;
+    const x = dir > 0 ? t : t - 1e-6;
+    let lo = 0;
+    let hi = beats.length - 2;
+    while (lo < hi) {
+      const mid = (lo + hi + 1) >> 1;
+      if (beats[mid]! <= x) lo = mid;
+      else hi = mid - 1;
+    }
+    return beats[lo + 1]! - beats[lo]!;
+  }
+
+  /** Why a loop with these points is not allowed, or null. Exact times are never clamped: a bad one is refused. */
+  private checkLoopPoints(id: string, start: number, end: number, edge: Edge): string | null {
+    const { song, regions } = this.store.get();
+    if (!song) return 'Load a song first.';
+    const value = edge === 'start' ? start : end;
+    if (!Number.isFinite(value)) return 'That is not a time.';
+    if (value < 0) return `A loop cannot go before the start of the song (${formatClock(0)}).`;
+    if (value > song.duration + 1e-9) return `Past the end of the song (${formatClock(song.duration)}).`;
+    if (end <= start + 1e-9) {
+      return edge === 'start' ? `Start must be before end (${formatClock(end)}).` : `End must be after start (${formatClock(start)}).`;
+    }
+    if (end - start < MIN_REGION_SECONDS - 1e-9) return `A loop must be at least ${MIN_REGION_SECONDS} s long.`;
+    const sorted = sortRegions(regions);
+    const clash = sorted.find((r) => r.id !== id && r.start < end - 1e-9 && r.end > start + 1e-9);
+    if (clash) {
+      return `Overlaps Loop ${sorted.indexOf(clash) + 1} (${formatClock(clash.start)}\u2013${formatClock(clash.end)}).`;
+    }
+    return null;
+  }
+
+  /**
+   * Move a loop's start or end to an exact time: typed, nudged or taken from the playhead. The time is used as given
+   * (never snapped, never clamped; refused when it is not allowed) and Smooth seam is turned off for the loop, so it
+   * plays exactly these times. Returns the reason when refused, null when applied.
+   */
+  editLoopEdge(id: string, edge: Edge, edit: EdgeEdit): string | null {
+    const { song, regions } = this.store.get();
+    if (!song) return 'Load a song first.';
+    const region = regions.find((r) => r.id === id);
+    if (!region) return 'That loop is gone.';
+    const current = region[edge];
+    let value: number;
+    if (edit.type === 'time') value = edit.seconds;
+    else if (edit.type === 'ms') value = current + edit.delta;
+    else if (edit.type === 'beat') {
+      const len = this.beatLengthAt(current, edit.dir);
+      if (len === null) return 'There is no steady beat to nudge by.';
+      value = current + edit.dir * len;
+    } else value = this.originalPlayhead();
+    value = roundMs(value);
+    const start = edge === 'start' ? value : region.start;
+    const end = edge === 'end' ? value : region.end;
+    const refused = this.checkLoopPoints(id, start, end, edge);
+    if (refused) return refused;
+    if (Math.round(value * 1000) === Math.round(current * 1000)) return null;
+    const next: LoopRegion = { ...region, start, end, smooth: false, exact: true };
+    delete next.seam;
+    this.seamKeys.delete(id);
+    this.commitRegions(regions.map((r) => (r.id === id ? next : r)));
+    return null;
+  }
+
+  /** I and O: the playhead becomes the start or end of the selected loop, or of the waveform selection. */
+  private markFromPlayhead(edge: Edge): void {
+    const { song, selectedId, regions, selection } = this.store.get();
+    if (!song) return;
+    if (selectedId && regions.some((r) => r.id === selectedId)) {
+      const refused = this.editLoopEdge(selectedId, edge, { type: 'playhead' });
+      if (refused) this.notify(refused);
+      return;
+    }
+    const t = roundMs(this.originalPlayhead());
+    const keep = selection ? selection.end - selection.start : this.defaultLoopSeconds();
+    let next: Span;
+    if (edge === 'start') {
+      next = selection && t < selection.end - MIN_REGION_SECONDS ? { start: t, end: selection.end } : { start: t, end: Math.min(song.duration, roundMs(t + keep)) };
+    } else {
+      next = selection && t > selection.start + MIN_REGION_SECONDS ? { start: selection.start, end: t } : { start: Math.max(0, roundMs(t - keep)), end: t };
+    }
+    if (next.end - next.start < MIN_REGION_SECONDS - 1e-9) {
+      this.notify('The selection would be too short there. Move the playhead and try again.');
+      return;
+    }
+    this.store.set({ selection: next });
   }
 
   /** The nearby loop with a cleaner chord change that the seam report found for a loop, if it still applies. */
@@ -1170,9 +1293,7 @@ export class App {
     const { song, playMode } = this.store.get();
     if (!song) return;
     if (this.player.isAuxPlaying() && this.aux) {
-      const t = this.player.getAuxTime();
-      const at = this.aux.kind === 'loop' ? t % this.aux.period : t;
-      const orig = mapToSource(this.aux.map, Math.round(at * this.aux.sampleRate), this.aux.sampleRate);
+      const orig = this.originalPlayhead();
       this.transport.setTime(orig, song.duration);
       this.waveform?.setCursor(orig, true);
       this.timelineStrip.setPosition(originalToExtended(this.timeline, orig));

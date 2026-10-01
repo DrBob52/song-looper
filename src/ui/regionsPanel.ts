@@ -3,14 +3,32 @@ import type { LoopRegion } from '../model';
 import { MAX_REPEATS } from '../model';
 import { currentSeam } from '../audio/path';
 import { isSmooth } from '../plan';
-import { formatTime } from '../util/time';
+import { formatClock, formatTime, parseClock, roundMs } from '../util/time';
 import { h } from './dom';
+import { NumberField } from './numberField';
 import { chipLabel, chipTitle, seamSummary } from './seamText';
+
+/** One way of moving a loop's start or end to an exact time. */
+export type EdgeEdit =
+  | { type: 'time'; seconds: number }
+  /** Add `delta` seconds (a nudge). */
+  | { type: 'ms'; delta: number }
+  /** One analysed beat earlier or later. */
+  | { type: 'beat'; dir: 1 | -1 }
+  /** The current playback position of the original song. */
+  | { type: 'playhead' };
+
+export type Edge = 'start' | 'end';
 
 export interface RegionsPanelCallbacks {
   onAdd(): void;
   onSelect(id: string): void;
   onRepeats(id: string, repeats: number): void;
+  /**
+   * Set a loop's start or end exactly. Returns a message when the edit is refused (the loop keeps its times), and
+   * null when it was applied.
+   */
+  onEditEdge(id: string, edge: Edge, edit: EdgeEdit): string | null;
   onSnapToggle(id: string, snapToBars: boolean): void;
   onPreviewLoop(id: string): void;
   onAuditionSeam(id: string): void;
@@ -33,6 +51,8 @@ export interface RegionsPanelInfo {
   /** Seconds per bar near a region (for the "bars" readout), or null when there is no beat grid. */
   barsOf(region: LoopRegion): number | null;
   hasGrid: boolean;
+  /** A steady beat was found, so "beat" nudges mean something. */
+  steadyBeat: boolean;
   /** Id of the region whose loop preview is playing. */
   previewingId: string | null;
   /** Repeat counts are computed from a target length, so the steppers are read-only. */
@@ -49,8 +69,11 @@ interface Row {
   el: HTMLLIElement;
   swatch: HTMLElement;
   title: HTMLElement;
-  times: HTMLElement;
+  start: NumberField;
+  end: NumberField;
+  beatButtons: HTMLButtonElement[];
   meta: HTMLElement;
+  exactNotice: HTMLElement;
   repeats: HTMLInputElement;
   dec: HTMLButtonElement;
   inc: HTMLButtonElement;
@@ -123,10 +146,13 @@ export class RegionsPanel {
       row.el.classList.toggle('selected', region.id === selectedId);
       row.swatch.style.background = region.color;
       row.title.textContent = `Loop ${index + 1}`;
-      row.times.textContent = `${formatTime(region.start, 1)} – ${formatTime(region.end, 1)}`;
+      row.start.setValue(roundMs(region.start));
+      row.end.setValue(roundMs(region.end));
+      for (const b of row.beatButtons) b.hidden = !info.steadyBeat;
       const len = region.end - region.start;
       const bars = info.barsOf(region);
-      row.meta.textContent = `${len.toFixed(1)} s${bars !== null ? ` · ${formatBars(bars)}` : ''}`;
+      row.meta.textContent = `Length ${len.toFixed(3)} s${bars !== null ? ` · ${formatBars(bars)}` : ''}`;
+      row.exactNotice.hidden = !(region.exact === true && region.smooth === false);
       if (document.activeElement !== row.repeats) row.repeats.value = String(region.repeats);
       row.repeats.disabled = info.repeatsLocked;
       row.dec.disabled = info.repeatsLocked;
@@ -180,8 +206,73 @@ export class RegionsPanel {
   private createRow(id: string): Row {
     const swatch = h('span', { class: 'swatch' });
     const title = h('strong');
-    const times = h('span', { class: 'mono' });
-    const meta = h('span', { class: 'muted small' });
+    const meta = h('span', { class: 'muted small mono', attrs: { 'data-testid': 'loop-length' } });
+    const exactNotice = h('div', {
+      class: 'exact-notice small',
+      text: 'Smooth seam is off so the loop plays exactly these times. Turn it back on to let it move the join.',
+      attrs: { hidden: true, 'data-testid': 'loop-exact-notice', role: 'status' },
+    });
+    const beatButtons: HTMLButtonElement[] = [];
+    const edge = (which: Edge, label: string): { el: HTMLElement; field: NumberField } => {
+      const field: NumberField = new NumberField({
+        id: `loop-${id}-${which}`,
+        label: `${label} time of this loop`,
+        testId: `loop-${which}`,
+        value: 0,
+        format: (v) => formatClock(v),
+        parse: (text) => {
+          const v = parseClock(text);
+          return v === null ? 'Enter a time like 1:09.600, 1:09 or 69.6.' : roundMs(v);
+        },
+        step: 0.01,
+        width: 10,
+        inputMode: 'text',
+        onCommit: (seconds) => this.cb.onEditEdge(id, which, { type: 'time', seconds }),
+      });
+      const apply = (edit: EdgeEdit): void => {
+        const refused = this.cb.onEditEdge(id, which, edit);
+        if (refused) field.showError(refused);
+      };
+      const btn = (text: string, aria: string, testId: string, edit: EdgeEdit, beat = false): HTMLButtonElement => {
+        const b = h('button', {
+          class: 'btn sm nudge',
+          text,
+          attrs: { type: 'button', 'aria-label': aria, title: aria, 'data-testid': testId },
+          on: {
+            click: (e) => {
+              e.stopPropagation();
+              apply(edit);
+            },
+          },
+        });
+        if (beat) beatButtons.push(b);
+        return b;
+      };
+      const el = h('div', { class: 'edge', attrs: { role: 'group', 'aria-label': `${label} of the loop` } }, [
+        h('label', { class: 'edge-label muted small', text: label, attrs: { for: `loop-${id}-${which}` } }),
+        field.el,
+        h('span', { class: 'nudges' }, [
+          btn('\u2212beat', `${label} one beat earlier`, `${which}-beat-dec`, { type: 'beat', dir: -1 }, true),
+          btn('\u221210 ms', `${label} 10 milliseconds earlier`, `${which}-ms-dec`, { type: 'ms', delta: -0.01 }),
+          btn('+10 ms', `${label} 10 milliseconds later`, `${which}-ms-inc`, { type: 'ms', delta: 0.01 }),
+          btn('+beat', `${label} one beat later`, `${which}-beat-inc`, { type: 'beat', dir: 1 }, true),
+        ]),
+        h('button', {
+          class: 'btn sm',
+          text: 'Set from playhead',
+          attrs: { type: 'button', 'data-testid': `${which}-playhead`, title: `Use the playhead as the ${which} (${which === 'start' ? 'I' : 'O'})` },
+          on: {
+            click: (e) => {
+              e.stopPropagation();
+              apply({ type: 'playhead' });
+            },
+          },
+        }),
+      ]);
+      return { el, field };
+    };
+    const startEdge = edge('start', 'Start');
+    const endEdge = edge('end', 'End');
     const repeats = h('input', {
       attrs: { type: 'number', min: 1, max: MAX_REPEATS, step: 1, 'aria-label': 'Repeat count', 'data-testid': 'repeats' },
       class: 'num',
@@ -301,7 +392,9 @@ export class RegionsPanel {
       [
         swatch,
         h('div', { class: 'region-main' }, [
-          h('div', { class: 'region-title' }, [title, times, meta, seam]),
+          h('div', { class: 'region-title' }, [title, seam]),
+          h('div', { class: 'region-times' }, [startEdge.el, endEdge.el, meta]),
+          exactNotice,
           h('div', { class: 'region-controls' }, [
             h('span', { class: 'field' }, [h('span', { text: 'Repeats' }), dec, repeats, inc]),
             h('label', { class: 'field' }, [snap, h('span', { text: 'Snap to bars' })]),
@@ -330,7 +423,7 @@ export class RegionsPanel {
         ]),
       ],
     );
-    return { el, swatch, title, times, meta, repeats, dec, inc, snap, loopBtn, seam, chip, smooth, summary, summaryText, undo, nearby, nearbyText, bridge, bridgeStatus, bridgeHint };
+    return { el, swatch, title, start: startEdge.field, end: endEdge.field, beatButtons, meta, exactNotice, repeats, dec, inc, snap, loopBtn, seam, chip, smooth, summary, summaryText, undo, nearby, nearbyText, bridge, bridgeStatus, bridgeHint };
   }
 }
 

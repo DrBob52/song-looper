@@ -78,6 +78,8 @@ export interface LoopRegion {
   snapToBars?: boolean;
   /** Smooth the seam: rotate both edges by up to a beat, align the end, pick the fade and match levels. Default on. */
   smooth?: boolean;
+  /** The points were typed, nudged or taken from the playhead: smoothing was turned off so they play exactly as given. */
+  exact?: boolean;
   /** Play a bridge of 1 to 4 bars after the loop end before jumping back (opt-in, default off). */
   bridge?: boolean;
   /** What the seam smoother decided for the loop's current points (see SeamPlan). */

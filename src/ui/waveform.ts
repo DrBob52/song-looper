@@ -68,6 +68,8 @@ export class WaveformView {
   private model = new Map<string, LoopRegion>();
   private contentText = new Map<string, string>();
   private followCursor = true;
+  /** A selection the app asked for (I and O keys): its region is created as given, not snapped like a drag. */
+  private pendingSelection: Span | null = null;
 
   constructor(
     container: HTMLElement,
@@ -323,6 +325,7 @@ export class WaveformView {
     }
     if (existing) existing.setOptions({ start: sel.start, end: sel.end });
     else {
+      this.pendingSelection = sel;
       this.regions.addRegion({
         id: SELECTION_ID,
         start: sel.start,
@@ -369,6 +372,12 @@ export class WaveformView {
 
   private onRegionCreated(region: Region): void {
     if (region.id !== SELECTION_ID) return;
+    const asked = this.pendingSelection;
+    if (asked && Math.abs(region.start - asked.start) < 1e-9 && Math.abs(region.end - asked.end) < 1e-9) {
+      // made by setSelection from the model: exactly as asked, nothing to report back
+      this.pendingSelection = null;
+      return;
+    }
     // Drag-created: there must be only one selection. Drop any earlier one.
     for (const other of this.regions.getRegions()) {
       if (other.id === SELECTION_ID && other !== region) other.remove();

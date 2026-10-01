@@ -843,3 +843,86 @@ input[aria-invalid='true'] {
     width: auto;
   }
 }
+
+/* ---- number fields and exact loop times ---- */
+
+.numfield {
+  display: inline-flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+}
+
+.nf-box {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.nf-input {
+  background: var(--panel);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 4px 8px;
+  min-height: 32px;
+  min-width: 0;
+  font-variant-numeric: tabular-nums;
+}
+
+.nf-input:focus {
+  outline: 2px solid var(--accent);
+  outline-offset: 1px;
+  border-color: var(--accent);
+}
+
+.nf-input[aria-invalid='true'] {
+  border-color: var(--danger);
+  outline: 2px solid var(--danger);
+  outline-offset: 0;
+}
+
+.nf-input:disabled {
+  opacity: 0.55;
+}
+
+.nf-msg {
+  color: var(--danger);
+  max-width: 28ch;
+}
+
+.region-times {
+  display: grid;
+  gap: 6px;
+}
+
+.edge {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-start;
+  gap: 6px 10px;
+}
+
+.edge-label {
+  width: 3em;
+  padding-top: 7px;
+}
+
+.nudges {
+  display: inline-flex;
+  flex-wrap: wrap;
+  gap: 4px;
+  padding-top: 2px;
+}
+
+.edge > .btn {
+  margin-top: 2px;
+}
+
+.btn.nudge {
+  font-family: var(--mono);
+  padding: 3px 7px;
+}
+
+.exact-notice {
+  color: var(--warn);
+}

@@ -26,3 +26,56 @@ export function parseTime(text: string): number | null {
   }
   return Number.isFinite(total) ? total : null;
 }
+
+// ---------------------------------------------------------------------------
+// Exact clock values (loop edges, target length): milliseconds in, milliseconds out
+// ---------------------------------------------------------------------------
+
+/**
+ * Parse a typed clock value into seconds. Accepted: a plain number of seconds (`83.5`), `m:ss`, `m:ss.mmm`,
+ * `ss.mmm`, `h:mm:ss` and `h:mm:ss.mmm`. With a colon the seconds (and, with an hour, the minutes) must be
+ * below 60, so `1:75` is junk rather than 2:15. Returns null for anything else (empty text, signs, exponents,
+ * more than three fields, stray characters). The result is not rounded; use `roundMs`.
+ */
+export function parseClock(text: string): number | null {
+  const t = text.trim();
+  if (!t) return null;
+  const parts = t.split(':');
+  if (parts.length > 3) return null;
+  const last = parts[parts.length - 1]!;
+  if (!/^(\d+(\.\d+)?|\.\d+)$/.test(last)) return null;
+  const head = parts.slice(0, -1);
+  if (!head.every((p) => /^\d+$/.test(p))) return null;
+  const seconds = Number(last);
+  if (parts.length > 1 && seconds >= 60) return null;
+  if (parts.length === 3 && Number(head[1]) >= 60) return null;
+  const total = head.reduce((acc, p) => acc * 60 + Number(p), 0) * 60 + seconds;
+  return Number.isFinite(total) ? total : null;
+}
+
+/** Round seconds to whole milliseconds. */
+export function roundMs(seconds: number): number {
+  return Math.round(seconds * 1000) / 1000;
+}
+
+/**
+ * Format seconds as `m:ss.mmm` (or `h:mm:ss.mmm` from one hour up), to `decimals` places (default milliseconds).
+ * Works on whole units so that `parseClock(formatClock(x))` gives `x` to the shown precision.
+ */
+export function formatClock(seconds: number, decimals = 3): string {
+  const unit = 10 ** decimals;
+  const t = Math.round(Math.max(0, Number.isFinite(seconds) ? seconds : 0) * unit);
+  const whole = Math.floor(t / unit);
+  const frac = t - whole * unit;
+  const h = Math.floor(whole / 3600);
+  const m = Math.floor((whole % 3600) / 60);
+  const s = whole % 60;
+  const pad = (n: number, width: number): string => String(n).padStart(width, '0');
+  const head = h > 0 ? `${h}:${pad(m, 2)}:${pad(s, 2)}` : `${m}:${pad(s, 2)}`;
+  return decimals > 0 ? `${head}.${pad(frac, decimals)}` : head;
+}
+
+/** Whole seconds, rounded down, as `m:ss` or `h:mm:ss`: how long something may be at most. */
+export function formatClockFloor(seconds: number): string {
+  return formatClock(Math.floor(Math.max(0, seconds) + 1e-9), 0);
+}
