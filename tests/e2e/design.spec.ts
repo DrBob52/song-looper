@@ -304,3 +304,255 @@ test('A · Original and B · Extended are the two sides; Export WAV is the stron
   const ring = await page.getByTestId('export').evaluate((el) => getComputedStyle(el).outlineColor);
   expect(ring).toBe('rgb(214, 160, 61)');
 });
+
+// ---- milestone 6: the components ----
+
+async function loadChords(page: Page): Promise<void> {
+  const fixture = await makeChordFixture({ progressions: { A: 'C G Am F', B: 'Dm Em F G' }, structure: 'ABABABAB' }, 'demo-chords.wav');
+  await loadFixture(page, fixture);
+  await waitForAnalysis(page);
+}
+const addLoop = (page: Page, start: number, end: number): Promise<unknown> =>
+  page.evaluate(
+    ([a, b]) =>
+      (window as unknown as { songLooper: { addLoop(s: { start: number; end: number }): string | null } }).songLooper.addLoop({ start: a!, end: b! }),
+    [start, end],
+  );
+
+test('suggestions are a tracklist: A1, A2, ... then times to the millisecond, bars, stars, the reason below, quiet buttons and one solid Add', async ({ page }) => {
+  await loadChords(page);
+  const rows = page.getByTestId('suggestion');
+  const n = await rows.count();
+  expect(n).toBeGreaterThanOrEqual(8);
+  for (let i = 0; i < Math.min(n, 8); i++) await expect(rows.nth(i).locator('.suggestion-rank')).toHaveText(`A${i + 1}`);
+  const first = rows.first();
+  await expect(first.locator('.times')).toHaveText(/^\d+:\d\d\.\d{3} – \d+:\d\d\.\d{3}$/);
+  await expect(first).toContainText(/\d+ bars? · \d+\.\d s/);
+  await expect(first.locator('.stars')).toHaveText('★★★★★');
+  // the reason is on its own line below, in soft ink
+  const reason = first.locator('.suggestion-reason');
+  const rb = (await reason.boundingBox())!;
+  const tb = (await first.locator('.suggestion-title').boundingBox())!;
+  expect(rb.y).toBeGreaterThan(tb.y + tb.height - 2);
+  expect(await reason.evaluate((el) => getComputedStyle(el).color)).toBe('rgb(107, 97, 87)');
+  // quiet text buttons, and Add as the one solid button
+  const style = (id: string) =>
+    first.getByTestId(id).evaluate((el) => {
+      const s = getComputedStyle(el);
+      return { bg: s.backgroundColor, border: s.borderTopColor };
+    });
+  expect((await style('suggestion-preview')).bg).toBe('rgba(0, 0, 0, 0)');
+  expect((await style('suggestion-preview')).border).toBe('rgba(0, 0, 0, 0)');
+  expect((await style('suggestion-seam')).bg).toBe('rgba(0, 0, 0, 0)');
+  expect((await style('suggestion-add')).bg).toBe('rgb(198, 55, 44)');
+  // "Show all 12" is "Show the whole side"
+  const more = page.getByTestId('suggestions-more');
+  await expect(more).toHaveText('Show the whole side');
+  await more.click();
+  expect(await rows.count()).toBe(12);
+  await expect(rows.nth(11).locator('.suggestion-rank')).toHaveText('A12');
+  await expect(more).toHaveText('Show fewer');
+});
+
+test('a loop is a label card: a 56 px circle in its colour with its number and repeats, stamp-style seam chip, mono seam lines', async ({ page }) => {
+  await loadChords(page);
+  await addLoop(page, 0, 8);
+  await page.getByTestId('bridge-toggle').first().check();
+  await expect(page.getByTestId('bridge-status').first()).toHaveText(/^Bridge: 4 bars/);
+  await addLoop(page, 16, 30);
+  await expect(page.getByTestId('seam-chip').nth(1)).toHaveText('Rough');
+  await page.getByTestId('repeats').first().fill('3');
+  await page.getByTestId('repeats').first().press('Enter');
+
+  const label = page.locator('.region').first().locator('.loop-label');
+  const lb = (await label.boundingBox())!;
+  expect(Math.round(lb.width)).toBe(56);
+  expect(Math.round(lb.height)).toBe(56);
+  expect(await label.evaluate((el) => getComputedStyle(el).borderRadius)).toMatch(/50%/);
+  await expect(label.locator('.label-num')).toHaveText('1');
+  await expect(label.locator('.label-reps')).toHaveText('×3');
+  await expect(page.locator('.region').nth(1).locator('.label-num')).toHaveText('2');
+  const colors = await page.locator('.region .loop-label').evaluateAll((els) => els.map((el) => getComputedStyle(el).backgroundColor));
+  expect(colors).toEqual(['rgb(198, 55, 44)', 'rgb(46, 90, 168)']);
+  // the card: label and play button on the left, the fields, nudges, repeats, toggles and actions on the right
+  const card = (await page.locator('.region').first().boundingBox())!;
+  const play = (await page.locator('.region').first().getByTestId('loop-preview').boundingBox())!;
+  const start = (await page.locator('.region').first().getByTestId('loop-start').boundingBox())!;
+  expect(play.x).toBeLessThan(start.x);
+  expect(play.x + play.width).toBeLessThan(card.x + 90);
+
+  // the rubber stamp
+  const chip = page.getByTestId('seam-chip').nth(1);
+  const stamp = await chip.evaluate((el) => {
+    const s = getComputedStyle(el);
+    return { upper: s.textTransform, border: s.borderTopWidth, style: s.borderTopStyle, transform: s.transform, mask: s.maskImage || s.webkitMaskImage, color: s.color };
+  });
+  expect(stamp.upper).toBe('uppercase');
+  expect(stamp.border).toBe('2px');
+  expect(stamp.style).toBe('solid');
+  const m = /matrix\(([-\d.e]+), ([-\d.e]+)/.exec(stamp.transform)!;
+  expect((Math.atan2(Number(m[2]), Number(m[1])) * 180) / Math.PI).toBeCloseTo(-2, 1);
+  expect(stamp.mask).toContain('feTurbulence');
+  expect(stamp.color).toBe('rgb(179, 38, 30)'); // rough: --bad
+  const clean = await page.getByTestId('seam-chip').first().evaluate((el) => getComputedStyle(el).color);
+  expect(clean).toBe('rgb(39, 107, 67)');
+  // the seam summary and the bridge status are in mono
+  for (const id of ['seam-summary', 'bridge-status']) {
+    expect(await page.getByTestId(id).first().evaluate((el) => getComputedStyle(el).fontFamily)).toContain('IBM Plex Mono');
+  }
+  // hovering a card lifts it by a pixel
+  const second = page.locator('.region').nth(1);
+  expect(await second.evaluate((el) => getComputedStyle(el).transform)).toBe('none');
+  await second.hover();
+  await page.waitForTimeout(300);
+  expect(await second.evaluate((el) => getComputedStyle(el).transform)).toBe('matrix(1, 0, 0, 1, 0, -1)');
+  expect(await second.evaluate((el) => getComputedStyle(el).boxShadow)).not.toBe('none');
+});
+
+test('the length panel, the run-out groove strip and the export dialog', async ({ browser }) => {
+  const context = await browser.newContext({ viewport: { width: 1100, height: 900 } });
+  const page = await context.newPage();
+  await loadChords(page);
+  await addLoop(page, 0, 8);
+  await page.getByTestId('bridge-toggle').first().check();
+  await expect(page.getByTestId('bridge-status').first()).toHaveText(/^Bridge: 4 bars/);
+  await addLoop(page, 16, 30);
+  await page.getByTestId('repeats').first().fill('3');
+  await page.getByTestId('repeats').first().press('Enter');
+
+  // big mono numbers, with their caption in small caps below
+  for (const id of ['length-original', 'length-extended']) {
+    const f = await page.getByTestId(id).evaluate((el) => {
+      const s = getComputedStyle(el);
+      return { family: s.fontFamily, size: parseFloat(s.fontSize) };
+    });
+    expect(f.family).toContain('IBM Plex Mono');
+    expect(f.size).toBeGreaterThanOrEqual(24);
+  }
+  const caption = page.locator('.length-caption');
+  await expect(caption).toHaveText('original → extended cut');
+  expect(await caption.evaluate((el) => getComputedStyle(el).fontVariantCaps)).toBe('all-small-caps');
+  expect((await caption.boundingBox())!.y).toBeGreaterThan((await page.getByTestId('length-extended').boundingBox())!.y);
+
+  // the strip: rounded ends, the original in --rule, repeats in their loop colour, bridges hatched
+  const bar = page.getByTestId('timeline');
+  const bb = (await bar.boundingBox())!;
+  expect(await bar.evaluate((el) => parseFloat(getComputedStyle(el).borderTopLeftRadius))).toBeGreaterThanOrEqual(bb.height / 2 - 1);
+  const originalBlock = bar.locator('.tl-block:not(.repeat):not(.bridge)').first();
+  expect(await originalBlock.evaluate((el) => getComputedStyle(el).backgroundColor)).toBe('rgb(216, 204, 184)');
+  const repeat = bar.locator('.tl-block.repeat').first();
+  expect(await repeat.evaluate((el) => getComputedStyle(el).backgroundColor)).toBe('rgb(198, 55, 44)');
+  expect(await repeat.evaluate((el) => getComputedStyle(el).fontFamily)).toContain('IBM Plex Mono');
+  await expect(repeat).toHaveText('1×');
+  expect(await bar.locator('.tl-block.bridge').first().evaluate((el) => getComputedStyle(el).backgroundImage)).toContain('repeating-linear-gradient');
+
+  // too long for a WAV: the message is in the warning colour
+  await page.getByTestId('repeats').first().fill('9999');
+  await page.getByTestId('repeats').first().press('Enter');
+  await expect(page.getByTestId('length-note')).toContainText('Too long for a WAV');
+  expect(await page.getByTestId('length-note').evaluate((el) => getComputedStyle(el).color)).toBe('rgb(138, 86, 18)');
+  await page.getByTestId('repeats').first().fill('3');
+  await page.getByTestId('repeats').first().press('Enter');
+
+  // the dialog is an inner sleeve with the paper grain; its progress is a groove filling with red
+  await page.getByTestId('export').click();
+  const dialog = page.getByTestId('export-dialog');
+  await expect(dialog).toBeVisible();
+  const d = await dialog.evaluate((el) => {
+    const s = getComputedStyle(el);
+    return { bg: s.backgroundColor, image: s.backgroundImage };
+  });
+  expect(d.bg).toBe('rgb(248, 242, 231)');
+  expect(d.image).toContain('data:image/svg+xml');
+  await page.getByTestId('export-confirm').click();
+  await expect(page.getByTestId('export-dialog')).toBeHidden({ timeout: 30_000 });
+  await context.close();
+});
+
+test('the waveform follows the theme: ink on sleeve paper, a red needle with a round head, mustard stickers, loop bands', async ({ browser }) => {
+  const context = await browser.newContext({ viewport: { width: 1100, height: 900 }, colorScheme: 'light' });
+  const page = await context.newPage();
+  await loadChords(page);
+  await addLoop(page, 0, 8);
+  const wave = () =>
+    page.evaluate(() => {
+      const app = (window as unknown as { songLooper: { waveform: { instance: { options: { waveColor: string; cursorColor: string } } } } }).songLooper;
+      const host = document.querySelector('[data-testid=waveform] > div')!;
+      const root = host.shadowRoot!;
+      const cursor = root.querySelector('[part=cursor]') as HTMLElement;
+      const head = getComputedStyle(cursor, '::after');
+      const region = root.querySelector('[data-region-id="loop-1"], [data-region-id]:not([data-region-id=selection]):not([data-region-id=highlight])') as HTMLElement;
+      const sticker = [...root.querySelectorAll('div')].find((d) => d.children.length === 0 && /^[A-Z]$/.test(d.textContent ?? '')) as HTMLElement;
+      return {
+        waveColor: app.waveform.instance.options.waveColor,
+        cursorColor: app.waveform.instance.options.cursorColor,
+        needle: getComputedStyle(cursor).backgroundColor,
+        headRadius: head.borderRadius,
+        headSize: [head.width, head.height],
+        bandWidth: getComputedStyle(region).borderTopWidth,
+        bandColor: getComputedStyle(region).borderTopColor,
+        regionBg: getComputedStyle(region).backgroundColor,
+        stickerBg: getComputedStyle(sticker).backgroundColor,
+        hostBg: getComputedStyle(document.querySelector('[data-testid=waveform]')!).backgroundColor,
+      };
+    });
+  let w = await wave();
+  expect(w.waveColor).toBe('#1d1915');
+  expect(w.cursorColor).toBe('#c6372c');
+  expect(w.needle).toBe('rgb(198, 55, 44)');
+  expect(w.headRadius).toBe('50%');
+  expect(w.headSize).toEqual(['9px', '9px']);
+  expect(w.bandWidth).toBe('2px');
+  expect(w.bandColor).toBe('rgb(198, 55, 44)');
+  expect(w.regionBg).toMatch(/^rgba\(198, 55, 44, 0\.4\d*\)$/); // selected: translucent loop colour
+  expect(w.stickerBg).toBe('rgb(214, 160, 61)');
+  expect(w.hostBg).toBe('rgb(248, 242, 231)');
+  // the theme switches under it (a host sets data-theme)
+  await page.evaluate(() => document.documentElement.setAttribute('data-theme', 'dark'));
+  await expect.poll(async () => (await wave()).waveColor).toBe('#efe4d3');
+  w = await wave();
+  expect(w.cursorColor).toBe('#e0574a');
+  expect(w.bandColor).toBe('rgb(224, 87, 74)');
+  expect(w.stickerBg).toBe('rgb(227, 178, 90)');
+  expect(w.hostBg).toBe('rgb(34, 28, 22)');
+  await context.close();
+});
+
+for (const scheme of ['light', 'dark'] as const) {
+  test(`${scheme}: the whole app fits a 380 px phone with a 16 px gutter, suggestions, two loop cards, the dialog and the bar`, async ({ browser }) => {
+    const context = await browser.newContext({ viewport: { width: 380, height: 800 }, colorScheme: scheme });
+    const page = await context.newPage();
+    await loadChords(page);
+    await addLoop(page, 0, 8);
+    await page.getByTestId('bridge-toggle').first().check();
+    await expect(page.getByTestId('bridge-status').first()).toHaveText(/^Bridge: 4 bars/);
+    await addLoop(page, 16, 30);
+    await expect(page.getByTestId('nearby').nth(1)).toBeVisible();
+    await page.getByTestId('length-mode-target').check();
+    await page.getByTestId('length-mode-repeats').check();
+    const fits = async (): Promise<void> => {
+      const o = await page.evaluate(() => ({ scroll: document.documentElement.scrollWidth, inner: window.innerWidth }));
+      expect(o.scroll).toBeLessThanOrEqual(o.inner);
+    };
+    await fits();
+    // every card keeps a 16 px gutter on both sides
+    for (const sel of ['.sleeve-face', '[data-testid=suggestions]', '[data-testid=regions]', 'section[aria-label=Length]', '.transport']) {
+      const b = (await page.locator(sel).first().boundingBox())!;
+      expect(b.x, sel).toBeGreaterThanOrEqual(15.5);
+      expect(380 - (b.x + b.width), sel).toBeGreaterThanOrEqual(15.5);
+    }
+    // the loop card's controls are all reachable inside the card
+    for (const id of ['loop-preview', 'loop-start', 'start-ms-inc', 'end-playhead', 'repeats', 'smooth-toggle', 'remove-loop']) {
+      const b = (await page.locator('.region').first().getByTestId(id).boundingBox())!;
+      expect(b.x + b.width, id).toBeLessThanOrEqual(380 - 16 + 0.5);
+      expect(b.x, id).toBeGreaterThanOrEqual(16 - 0.5);
+    }
+    await page.getByTestId('export').click();
+    await expect(page.getByTestId('export-dialog')).toBeVisible();
+    const db = (await page.getByTestId('export-dialog').boundingBox())!;
+    expect(db.x).toBeGreaterThanOrEqual(0);
+    expect(db.x + db.width).toBeLessThanOrEqual(380);
+    await fits();
+    await context.close();
+  });
+}

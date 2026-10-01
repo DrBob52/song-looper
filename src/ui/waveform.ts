@@ -293,7 +293,7 @@ export class WaveformView {
     loops.forEach((loop, index) => {
       const selected = loop.id === selectedId;
       const solid = loopResolved(loop.color);
-      const color = hexToRgba(solid, selected ? 0.42 : 0.28);
+      const color = hexToRgba(solid, Number(cssVar(selected ? '--region-alpha-on' : '--region-alpha')) || (selected ? 0.42 : 0.28));
       let r = this.findRegion(loop.id);
       if (!r) {
         r = this.regions.addRegion({

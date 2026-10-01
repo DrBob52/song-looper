@@ -6,7 +6,7 @@ import { isSmooth } from '../plan';
 import { formatClock, formatTime, parseClock, roundMs } from '../util/time';
 import { h } from './dom';
 import { holdRepeat } from './holdRepeat';
-import { loopCss } from './loopColors';
+import { loopCss, loopInkCss } from './loopColors';
 import { NumberField, parsePlainNumber } from './numberField';
 import { chipLabel, chipTitle, seamSummary } from './seamText';
 
@@ -69,7 +69,9 @@ export interface RegionsPanelInfo {
 
 interface Row {
   el: HTMLLIElement;
-  swatch: HTMLElement;
+  label: HTMLElement;
+  labelNum: HTMLElement;
+  labelReps: HTMLElement;
   title: HTMLElement;
   start: NumberField;
   end: NumberField;
@@ -147,7 +149,12 @@ export class RegionsPanel {
       if (current !== row.el) this.list.insertBefore(row.el, current ?? null);
 
       row.el.classList.toggle('selected', region.id === selectedId);
-      row.swatch.style.background = loopCss(region.color);
+      // the record label: the loop's colour, its number large and its repeats small
+      row.label.style.background = loopCss(region.color);
+      row.label.style.color = loopInkCss(region.color);
+      row.el.style.setProperty('--loop-color', loopCss(region.color));
+      row.labelNum.textContent = String(index + 1);
+      row.labelReps.textContent = `\u00d7${region.repeats}`;
       row.title.textContent = `Loop ${index + 1}`;
       row.start.setValue(roundMs(region.start));
       row.end.setValue(roundMs(region.end));
@@ -208,7 +215,9 @@ export class RegionsPanel {
   }
 
   private createRow(id: string): Row {
-    const swatch = h('span', { class: 'swatch' });
+    const labelNum = h('span', { class: 'label-num mono' });
+    const labelReps = h('span', { class: 'label-reps mono' });
+    const label = h('span', { class: 'loop-label', attrs: { 'aria-hidden': 'true' } }, [labelNum, labelReps]);
     const title = h('strong');
     const meta = h('span', { class: 'muted small mono', attrs: { 'data-testid': 'loop-length' } });
     const exactNotice = h('div', {
@@ -331,7 +340,7 @@ export class RegionsPanel {
       [h('span', { class: 'play-glyph', attrs: { 'aria-hidden': 'true' } }), loopLabel],
     );
     const seamBtn = h('button', {
-      class: 'btn sm',
+      class: 'btn sm quiet',
       text: 'Audition seam',
       attrs: { type: 'button', 'data-testid': 'audition-seam', title: 'Hear the jump from the loop end back to its start, as the export will have it' },
       on: { click: () => this.cb.onAuditionSeam(id) },
@@ -342,7 +351,7 @@ export class RegionsPanel {
     });
     const summaryText = h('span', { attrs: { 'data-testid': 'seam-summary' } });
     const undo = h('button', {
-      class: 'btn sm',
+      class: 'btn sm quiet',
       text: 'Undo',
       attrs: {
         type: 'button',
@@ -364,7 +373,7 @@ export class RegionsPanel {
     const nearby = h('div', { class: 'nearby small', attrs: { hidden: true, 'data-testid': 'nearby' } }, [
       nearbyText,
       h('button', {
-        class: 'btn sm',
+        class: 'btn sm quiet',
         text: 'Audition',
         attrs: { type: 'button', 'data-testid': 'nearby-audition', title: 'Hear the seam of that loop' },
         on: { click: () => this.cb.onNearbyAudition(id) },
@@ -377,7 +386,7 @@ export class RegionsPanel {
       }),
     ]);
     const originalBtn = h('button', {
-      class: 'btn sm',
+      class: 'btn sm quiet',
       text: 'Hear original',
       attrs: {
         type: 'button',
@@ -392,7 +401,7 @@ export class RegionsPanel {
       chip,
     ]);
     const removeBtn = h('button', {
-      class: 'btn sm danger',
+      class: 'btn sm quiet danger',
       text: 'Remove',
       attrs: { type: 'button', 'data-testid': 'remove-loop' },
       on: { click: () => this.cb.onRemove(id) },
@@ -409,12 +418,14 @@ export class RegionsPanel {
         },
       },
       [
-        swatch,
+        // the record label and the loop's play button; the rest of the card follows (the grid places them)
+        label,
+        loopBtn,
         h('div', { class: 'region-main' }, [
-          h('div', { class: 'region-title' }, [loopBtn, title, seam]),
+          h('div', { class: 'region-title' }, [title, seam]),
           h('div', { class: 'region-times' }, [startEdge.el, endEdge.el, meta]),
           exactNotice,
-          h('div', { class: 'region-controls' }, [
+          h('div', { class: 'region-settings' }, [
             h('span', { class: 'field' }, [h('span', { text: 'Repeats' }), dec, repeats.el, inc]),
             h('label', { class: 'field' }, [snap, h('span', { text: 'Snap to bars' })]),
             h('label', { class: 'field', attrs: { title: 'Move the seam by up to a beat, line up the end, pick the fade and match levels' } }, [
@@ -429,11 +440,8 @@ export class RegionsPanel {
               },
               [bridge, h('span', { text: 'Bridge' })],
             ),
-            h('span', { class: 'spacer' }),
-            seamBtn,
-            originalBtn,
-            removeBtn,
           ]),
+          h('div', { class: 'region-actions' }, [seamBtn, originalBtn, removeBtn]),
           summary,
           bridgeStatus,
           bridgeHint,
@@ -441,7 +449,7 @@ export class RegionsPanel {
         ]),
       ],
     );
-    return { el, swatch, title, start: startEdge.field, end: endEdge.field, beatButtons, meta, exactNotice, repeats, dec, inc, snap, loopBtn, loopLabel, seam, chip, smooth, summary, summaryText, undo, nearby, nearbyText, bridge, bridgeStatus, bridgeHint };
+    return { el, label, labelNum, labelReps, title, start: startEdge.field, end: endEdge.field, beatButtons, meta, exactNotice, repeats, dec, inc, snap, loopBtn, loopLabel, seam, chip, smooth, summary, summaryText, undo, nearby, nearbyText, bridge, bridgeStatus, bridgeHint };
   }
 }
 

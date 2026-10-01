@@ -117,12 +117,12 @@ export class LengthPanel {
 
     this.el = h('section', { class: 'card', attrs: { 'aria-label': 'Length' } }, [
       h('div', { class: 'card-head' }, [h('h2', { text: 'Length' }), h('div', { class: 'row' }, [a.el, b.el])]),
-      h('div', { class: 'row' }, [
+      h('div', { class: 'length-figures' }, [
         this.original,
-        h('span', { class: 'muted', text: '→' }),
+        h('span', { class: 'length-arrow', text: '\u2192', attrs: { 'aria-hidden': 'true' } }),
         this.extended,
-        h('span', { class: 'muted small', text: 'original → extended' }),
       ]),
+      h('div', { class: 'length-caption', text: 'original \u2192 extended cut' }),
       this.targetRow,
       this.note,
       h('details', { class: 'advanced' }, [

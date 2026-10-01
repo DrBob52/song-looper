@@ -1,6 +1,6 @@
 import type { Analysis, LoopCandidate } from '../analysis/types';
 import type { LoopRegion } from '../model';
-import { formatTime } from '../util/time';
+import { formatClock } from '../util/time';
 import { formatBars } from './regionsPanel';
 import { clear, h } from './dom';
 
@@ -40,7 +40,10 @@ export class SuggestionsPanel {
   constructor(private cb: SuggestionsCallbacks) {
     this.body = h('div');
     this.el = h('section', { class: 'card', attrs: { 'aria-label': 'Suggested loops', 'data-testid': 'suggestions' } }, [
-      h('div', { class: 'card-head' }, [h('h2', { text: 'Suggested loops' })]),
+      h('div', { class: 'card-head' }, [
+        h('h2', { text: 'Suggested loops' }),
+        h('span', { class: 'side-tag mono small', text: 'SIDE A' }),
+      ]),
       this.body,
     ]);
   }
@@ -69,8 +72,8 @@ export class SuggestionsPanel {
     if (a.candidates.length > VISIBLE_DEFAULT) {
       this.body.append(
         h('button', {
-          class: 'btn sm more',
-          text: this.showAll ? 'Show fewer' : `Show all ${a.candidates.length}`,
+          class: 'btn sm quiet more',
+          text: this.showAll ? 'Show fewer' : 'Show the whole side',
           attrs: { type: 'button', 'data-testid': 'suggestions-more' },
           on: {
             click: () => {
@@ -90,7 +93,7 @@ export class SuggestionsPanel {
       : view.regions.find((r) => r.start < c.end - 1e-6 && r.end > c.start + 1e-6);
     const previewing = view.previewingKey === suggestionKey(index);
     const addBtn = h('button', {
-      class: 'btn sm primary',
+      class: 'btn sm primary add',
       text: same ? 'Added' : 'Add',
       attrs: {
         type: 'button',
@@ -113,12 +116,13 @@ export class SuggestionsPanel {
         },
       },
       [
-        h('div', { class: 'suggestion-rank', text: String(index + 1) }),
+        // tracklist numbering: A1, A2, ... in rank order
+        h('div', { class: 'suggestion-rank', text: `A${index + 1}`, attrs: { 'aria-label': `Track A${index + 1}` } }),
         h('div', { class: 'suggestion-main' }, [
           h('div', { class: 'suggestion-title' }, [
             view.labels[index] ? h('strong', { text: view.labels[index] }) : null,
-            h('span', { class: 'mono', text: `${formatTime(c.start, 1)} – ${formatTime(c.end, 1)}` }),
-            h('span', { class: 'muted small', text: `${formatBars(c.bars)} · ${(c.end - c.start).toFixed(1)} s` }),
+            h('span', { class: 'mono times', text: `${formatClock(c.start)} – ${formatClock(c.end)}` }),
+            h('span', { class: 'muted small mono', text: `${formatBars(c.bars)} · ${(c.end - c.start).toFixed(1)} s` }),
             h('span', {
               class: 'stars',
               text: starString(c.stars),
@@ -128,13 +132,13 @@ export class SuggestionsPanel {
           h('div', { class: 'small suggestion-reason', text: c.reason }),
           h('div', { class: 'suggestion-actions' }, [
             h('button', {
-              class: `btn sm${previewing ? ' active' : ''}`,
+              class: `btn sm quiet${previewing ? ' active' : ''}`,
               text: previewing ? 'Stop' : 'Preview',
               attrs: { type: 'button', 'data-testid': 'suggestion-preview', title: 'Hear this loop repeating' },
               on: { click: () => this.cb.onPreview(index) },
             }),
             h('button', {
-              class: 'btn sm',
+              class: 'btn sm quiet',
               text: 'Audition seam',
               attrs: { type: 'button', 'data-testid': 'suggestion-seam', title: 'Hear the jump from the loop end back to its start' },
               on: { click: () => this.cb.onAuditionSeam(index) },

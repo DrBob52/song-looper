@@ -2,7 +2,7 @@ import type { Segment } from '../audio/render';
 import type { LoopRegion } from '../model';
 import { formatTime } from '../util/time';
 import { h } from './dom';
-import { loopCss } from './loopColors';
+import { loopCss, loopInkCss } from './loopColors';
 
 /** Above this many segments the strip draws one block per loop instead of one per play. */
 const MAX_BLOCKS = 400;
@@ -40,7 +40,7 @@ export class TimelineStrip {
     this.el = h('section', { class: 'card', attrs: { 'aria-label': 'Extended timeline' } }, [
       h('div', { class: 'card-head' }, [
         h('h2', { text: 'Extended timeline' }),
-        h('span', { class: 'muted small', text: 'Click to play the extended version from there' }),
+        h('span', { class: 'muted small', text: 'The run-out groove: click to play the extended cut from there' }),
       ]),
       h('div', { class: 'tl-wrap' }, [this.bar, this.head]),
     ]);
@@ -74,6 +74,7 @@ export class TimelineStrip {
         const info = byId.get(seg.regionId);
         block.classList.add('repeat');
         block.style.background = info ? loopCss(info.region.color) : 'var(--label-red)';
+        block.style.color = info ? loopInkCss(info.region.color) : 'var(--on-red)';
         block.style.opacity = (seg.repeat ?? 1) % 2 === 0 ? '0.6' : '1';
         block.title = `Loop ${(info?.index ?? 0) + 1}, play ${seg.repeat} of ${seg.repeats} (${formatTime(seg.outStart, 1)})`;
         if (pct > 4) block.textContent = `${seg.repeat}×`;
