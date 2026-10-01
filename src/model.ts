@@ -86,9 +86,36 @@ export interface LoopRegion {
   seam?: SeamPlan;
 }
 
+/**
+ * A cut (SPEC-v1.3.md 2): a span of the original song that the extended song skips. It is attached to the song, so it stays
+ * where it is when repeat counts change. Cuts never overlap loops or each other.
+ */
+export interface Cut {
+  id: string;
+  /** Seconds on the original song. */
+  start: number;
+  end: number;
+}
+
+/**
+ * How the extended song ends (SPEC-v1.3.md 3). `endAt` is a time on the extended timeline (null: the song's real ending);
+ * the fade is an equal-power cosine to silence over the last `fadeSeconds` before the end (0: no fade).
+ */
+export interface Ending {
+  endAt: number | null;
+  fadeSeconds: number;
+}
+
 export interface Plan {
   regions: LoopRegion[];
+  /** Spans of the song to skip (none when left out). */
+  cuts?: Cut[];
+  /** Where and how the extended song ends (the real ending, no fade, when left out). */
+  ending?: Ending;
 }
+
+/** The longest fade-out the Ending card accepts, in seconds. */
+export const MAX_FADE_SECONDS = 60;
 
 export const MAX_REPEATS = 9999;
 

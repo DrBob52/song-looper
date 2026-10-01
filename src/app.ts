@@ -6,16 +6,16 @@ import { computePeaks, decodeFile, toMonoAnalysisRate } from './audio/decode';
 import type { DecodedSong } from './audio/decode';
 import { Player } from './audio/player';
 import { loopPath, cycleSeconds } from './audio/path';
-import { mapToSource, renderLoopBody, renderSeamSnippet } from './audio/preview';
+import { mapToSource, renderCutSnippet, renderLoopBody, renderSeamSnippet } from './audio/preview';
 import type { PreviewRegion, SourceMapEntry } from './audio/preview';
 import {
   buildTimeline,
+  cutSeconds,
   extendedDuration,
   extendedToOriginal,
   originalToExtended,
   planKey,
-  regionsToSamples,
-  renderedLength,
+  plannedFrames,
 } from './audio/render';
 import { exportFrames, wavTooLong } from './audio/exportPieces';
 import { WorkerChunkSource } from './audio/chunkSource';
@@ -30,10 +30,26 @@ import type { BitDepth } from './audio/wav';
 import { saveWav, warmUpSave } from './audio/save';
 import { barsBetween, emptyGrid, makeGrid, snapTime } from './grid';
 import type { Grid } from './grid';
-import type { LoopRegion, Plan, SeamPlan, Span } from './model';
+import type { Cut, LoopRegion, Plan, SeamPlan, Span } from './model';
 import { MAX_REPEATS } from './model';
-import { MIN_REGION_SECONDS, fitSpan, isSmooth, neighbourBounds, newRegionId, nextColor, sortRegions, undoSmoothing, withSeamPlan } from './plan';
+import {
+  MIN_CUT_SECONDS,
+  MIN_REGION_SECONDS,
+  checkSpanPoints,
+  fitSpan,
+  freeGaps,
+  isSmooth,
+  neighbourBounds,
+  newCutId,
+  newRegionId,
+  nextColor,
+  sortCuts,
+  sortRegions,
+  undoSmoothing,
+  withSeamPlan,
+} from './plan';
 import { AnalysisControls } from './ui/analysisControls';
+import { CutsPanel } from './ui/cutsPanel';
 import { Dropzone } from './ui/dropzone';
 import { h } from './ui/dom';
 import { ExportDialog } from './ui/exportDialog';
@@ -49,7 +65,7 @@ import { PITCH_MAX, PITCH_MIN, SPEED_MAX, SPEED_MIN } from './ui/transport';
 import type { PlayMode } from './ui/transport';
 import { SELECTION_ID, WaveformView } from './ui/waveform';
 import { formatChannels, formatRate } from './util/format';
-import { formatClock, formatClockFloor, formatTime, roundMs } from './util/time';
+import { formatClockFloor, formatTime, roundMs } from './util/time';
 import { createStore } from './util/store';
 
 /** The waveform zoom range in pixels per second (0 fits the whole song). */
@@ -59,6 +75,9 @@ const ZOOM_MAX_PX = 400;
 export interface AppState {
   song: DecodedSong | null;
   regions: LoopRegion[];
+  /** Spans of the original song that the extended song skips (SPEC-v1.3.md 2). */
+  cuts: Cut[];
+  /** The selected loop or cut (their ids never clash). */
   selectedId: string | null;
   selection: Span | null;
   playMode: PlayMode;
@@ -125,6 +144,7 @@ export class App {
   readonly store = createStore<AppState>({
     song: null,
     regions: [],
+    cuts: [],
     selectedId: null,
     selection: null,
     playMode: 'original',
@@ -155,6 +175,7 @@ export class App {
   private dropzone: Dropzone;
   private transport: Transport;
   private regionsPanel: RegionsPanel;
+  private cutsPanel: CutsPanel;
   private lengthPanel: LengthPanel;
   private exportDialog: ExportDialog;
   private songPanel: HTMLElement;
@@ -197,6 +218,7 @@ export class App {
     }
     this.regionsPanel = new RegionsPanel({
       onAdd: () => this.addLoop(),
+      onCutSelection: () => this.cutSelection(),
       onSelect: (id) => this.selectRegion(id),
       onRepeats: (id, n) => this.setRepeats(id, n),
       onEditEdge: (id, edge, edit) => this.editLoopEdge(id, edge, edit),
@@ -213,6 +235,16 @@ export class App {
       onHover: (id) => {
         const r = id ? this.store.get().regions.find((x) => x.id === id) : undefined;
         this.waveform?.setHighlight(r ? { start: r.start, end: r.end } : null);
+      },
+    });
+    this.cutsPanel = new CutsPanel({
+      onSelect: (id) => this.selectRegion(id),
+      onEditEdge: (id, edge, edit) => this.editCutEdge(id, edge, edit),
+      onAudition: (id) => void this.auditionCut(id),
+      onRemove: (id) => this.removeCut(id),
+      onHover: (id) => {
+        const c = id ? this.store.get().cuts.find((x) => x.id === id) : undefined;
+        this.waveform?.setHighlight(c ? { start: c.start, end: c.end } : null);
       },
     });
     this.analysisControls = new AnalysisControls({
@@ -286,20 +318,23 @@ export class App {
           h('div', { class: 'wave-hint', attrs: { 'data-testid': 'wave-hint' } }, [
             'Click to seek. Drag on the waveform to select a span, then press ',
             h('kbd', { text: 'L' }),
-            ' to add a loop. ',
+            ' to add a loop, or ',
+            h('kbd', { text: 'X' }),
+            ' to cut it out of the extended song. ',
             h('kbd', { text: 'I' }),
             ' and ',
             h('kbd', { text: 'O' }),
-            ' set the start and end of the selected loop (or of the selection) to the playhead. ',
+            ' set the start and end of the selected loop or cut (or of the selection) to the playhead. ',
             h('kbd', { text: 'Space' }),
             ' play/pause, ',
             h('kbd', { text: 'Delete' }),
-            ' removes the selected loop.',
+            ' removes the selected loop or cut.',
           ]),
           this.noticeEl,
         ]),
         this.suggestionsPanel.el,
         this.regionsPanel.el,
+        this.cutsPanel.el,
         this.lengthPanel.el,
         this.timelineStrip.el,
       ],
@@ -343,13 +378,28 @@ export class App {
   // ---- state -> views ----------------------------------------------------------
 
   private plan(): Plan {
-    return { regions: this.store.get().regions };
+    const { regions, cuts } = this.store.get();
+    return { regions, cuts };
+  }
+
+  /** Everything that occupies a span of the song: loops and cuts block each other and the seam smoother's room. */
+  private obstacles(): { id: string; start: number; end: number }[] {
+    const { regions, cuts } = this.store.get();
+    return [...regions, ...cuts];
   }
 
   private onState(s: AppState, prev: AppState): void {
     const regionsChanged = s.regions !== prev.regions;
-    if (regionsChanged || s.selectedId !== prev.selectedId || s.song !== prev.song) {
-      this.waveform?.setRegions(s.regions, s.selectedId);
+    const cutsChanged = s.cuts !== prev.cuts;
+    if (regionsChanged || cutsChanged || s.selectedId !== prev.selectedId || s.song !== prev.song) {
+      this.waveform?.setRegions(s.regions, s.selectedId, s.cuts);
+    }
+    if (cutsChanged || s.selectedId !== prev.selectedId || s.song !== prev.song || s.grid !== prev.grid) {
+      this.cutsPanel.update(s.cuts, s.selectedId, {
+        barsOf: (c) => barsBetween(s.grid, c.start, c.end),
+        steadyBeat: s.grid.steady,
+        duration: s.song?.duration ?? 0,
+      });
     }
     if (
       regionsChanged ||
@@ -380,7 +430,7 @@ export class App {
         },
       });
     }
-    if (regionsChanged || s.analysis !== prev.analysis || s.analysisState !== prev.analysisState) this.scheduleSeamReports();
+    if (regionsChanged || cutsChanged || s.analysis !== prev.analysis || s.analysisState !== prev.analysisState) this.scheduleSeamReports();
     if (s.grid !== prev.grid || s.analysis !== prev.analysis) {
       this.waveform?.setGrid(
         s.grid.display ? { beats: s.grid.beats, bars: s.grid.bars } : null,
@@ -416,6 +466,7 @@ export class App {
     }
     if (
       regionsChanged ||
+      cutsChanged ||
       s.song !== prev.song ||
       s.seamMs !== prev.seamMs ||
       s.lengthMode !== prev.lengthMode ||
@@ -424,7 +475,7 @@ export class App {
       if (s.song) this.timeline = buildTimeline(this.plan(), s.song.duration);
       this.updateLength();
       this.timelineStrip.update(this.timeline, s.regions);
-      this.onPlanChanged(regionsChanged || s.seamMs !== prev.seamMs);
+      this.onPlanChanged(regionsChanged || cutsChanged || s.seamMs !== prev.seamMs);
     } else if (s.bitDepth !== prev.bitDepth) {
       this.updateLength();
     }
@@ -446,6 +497,8 @@ export class App {
     const { song, lengthMode, targetSeconds, seamMs, regions, bitDepth } = this.store.get();
     if (!song) return;
     const ext = extendedDuration(this.plan(), song.duration);
+    // the song without its cuts: what the loops' repeats are added to
+    const base = song.duration - cutSeconds(this.plan(), song.duration);
     let note = '';
     let noteKind: 'info' | 'warn' = 'info';
     // a song too long for a WAV at any depth cannot be exported; one that only fits at 16-bit says so when 24 or 32 is chosen
@@ -458,7 +511,7 @@ export class App {
     } else if (lengthMode === 'target') {
       if (regions.length === 0) {
         note = 'Add a loop first; the target length is spread across your loops.';
-      } else if (targetSeconds <= song.duration) {
+      } else if (targetSeconds <= base) {
         note = 'The target is not longer than the song, so nothing repeats.';
       } else {
         const diff = ext - targetSeconds;
@@ -520,12 +573,18 @@ export class App {
     } else if (e.key === 'l' || e.key === 'L') {
       e.preventDefault();
       this.addLoop();
+    } else if (e.key === 'x' || e.key === 'X') {
+      e.preventDefault();
+      this.cutSelection();
     } else if (e.key === 'i' || e.key === 'I' || e.key === 'o' || e.key === 'O') {
       e.preventDefault();
       this.markFromPlayhead(e.key === 'i' || e.key === 'I' ? 'start' : 'end');
     } else if (e.key === 'Delete' || e.key === 'Backspace') {
-      const { selectedId, selection } = this.store.get();
-      if (selectedId) {
+      const { selectedId, selection, cuts } = this.store.get();
+      if (selectedId && cuts.some((c) => c.id === selectedId)) {
+        e.preventDefault();
+        this.removeCut(selectedId);
+      } else if (selectedId) {
         e.preventDefault();
         this.removeRegion(selectedId);
       } else if (selection) {
@@ -580,6 +639,7 @@ export class App {
     this.store.set({
       song,
       regions: [],
+      cuts: [],
       selectedId: null,
       selection: null,
       playMode: 'original',
@@ -609,26 +669,31 @@ export class App {
       onSeek: (t) => this.seekOriginal(t),
       onSelection: (sel) => this.store.set({ selection: sel }),
       onRegionEdit: (id, start, end) => this.updateRegion(id, { start, end }),
+      onCutEdit: (id, start, end) => this.updateCut(id, { start, end }),
       onRegionSelect: (id) => this.selectRegion(id),
       getSnap: (id) => {
         const s = this.store.get();
         if (s.grid.beats.length === 0) return null;
-        const toBars = id === SELECTION_ID ? true : s.regions.find((r) => r.id === id)?.snapToBars !== false;
+        // bars by default for selections and cuts; a loop can be set to beats
+        const toBars = id === SELECTION_ID || s.cuts.some((c) => c.id === id) ? true : s.regions.find((r) => r.id === id)?.snapToBars !== false;
         return (t) => snapTime(this.store.get().grid, t, toBars);
       },
       getBounds: (id) => {
         const s = this.store.get();
-        return id === SELECTION_ID || !s.song ? null : neighbourBounds(s.regions, id, s.song.duration);
+        return id === SELECTION_ID || !s.song ? null : neighbourBounds(this.obstacles(), id, s.song.duration);
       },
-      getMinLength: (id) => {
+      getMinLength: (id, free) => {
         const s = this.store.get();
-        if (s.grid.beats.length === 0) return MIN_REGION_SECONDS;
-        const toBars = id === SELECTION_ID ? true : s.regions.find((r) => r.id === id)?.snapToBars !== false;
-        return Math.max(MIN_REGION_SECONDS, toBars ? s.grid.barSeconds : s.grid.beatSeconds);
+        const isCut = s.cuts.some((c) => c.id === id);
+        const min = isCut ? MIN_CUT_SECONDS : MIN_REGION_SECONDS;
+        // Shift-dragging (free, no snapping) may go as short as the shortest cut or loop
+        if (s.grid.beats.length === 0 || (isCut && free)) return min;
+        const toBars = id === SELECTION_ID || isCut ? true : s.regions.find((r) => r.id === id)?.snapToBars !== false;
+        return Math.max(min, toBars ? s.grid.barSeconds : s.grid.beatSeconds);
       },
     });
     this.waveform.setZoom(this.store.get().zoom);
-    this.waveform.setRegions([], null);
+    this.waveform.setRegions([], null, []);
     this.renderTime();
     void this.startAnalysis(song);
   }
@@ -710,7 +775,8 @@ export class App {
 
   // ---- seam reports ------------------------------------------------------------
 
-  private requestFor(r: LoopRegion, regions: readonly LoopRegion[], duration: number): SeamRequest {
+  private requestFor(r: LoopRegion, regions: readonly { id: string; start: number; end: number }[], duration: number): SeamRequest {
+    // the room around a loop is bounded by its neighbours, cuts included: smoothing never moves a loop into a cut
     const room = neighbourBounds(regions, r.id, duration);
     return { id: r.id, start: r.start, end: r.end, smooth: isSmooth(r), bridge: r.bridge === true, minStart: room.start, maxEnd: room.end };
   }
@@ -719,7 +785,8 @@ export class App {
   private needsSeamReports(): boolean {
     const { regions, analysis, analysisState, song } = this.store.get();
     if (!song || !analysis || analysis.silent || analysisState === 'running') return false;
-    return regions.some((r) => this.seamKeys.get(r.id) !== requestKey(this.requestFor(r, regions, song.duration)));
+    const around = this.obstacles();
+    return regions.some((r) => this.seamKeys.get(r.id) !== requestKey(this.requestFor(r, around, song.duration)));
   }
 
   /** Ask the analysis worker how the loops' seams sound and how to smooth them, shortly after the loops or the analysis change. */
@@ -755,7 +822,8 @@ export class App {
     if (!this.needsSeamReports()) return;
     const { regions, song } = this.store.get();
     if (!song) return;
-    const requests = regions.map((r) => this.requestFor(r, regions, song.duration));
+    const around = this.obstacles();
+    const requests = regions.map((r) => this.requestFor(r, around, song.duration));
     for (const q of requests) this.seamKeys.set(q.id, requestKey(q));
     const token = this.loadToken;
     try {
@@ -778,7 +846,7 @@ export class App {
     let regionsChanged = false;
     const regions = now.regions.map((r) => {
       const report = reports.find((x) => x.id === r.id);
-      if (!report || sent.get(r.id) !== requestKey(this.requestFor(r, now.regions, now.song!.duration))) return r;
+      if (!report || sent.get(r.id) !== requestKey(this.requestFor(r, [...now.regions, ...now.cuts], now.song!.duration))) return r;
       seams[r.id] = report;
       const next = report.plan && (isSmooth(r) || r.bridge === true) ? withSeamPlan(r, report.plan) : r;
       if (next !== r) regionsChanged = true;
@@ -851,28 +919,31 @@ export class App {
    * Frames in the extended song as it will be rendered: the timeline's length, adjusted for the few samples by which
    * the edges of each loop snap to zero crossings (which add up over thousands of repeats).
    */
-  private plannedFrames(regions: readonly LoopRegion[] = this.store.get().regions): number {
+  private plannedFrames(regions: readonly LoopRegion[] = this.store.get().regions, cuts: readonly Cut[] = this.store.get().cuts): number {
     const { song } = this.store.get();
     if (!song) return 0;
-    return renderedLength(regionsToSamples(song.buffer, { regions: [...regions] }), song.buffer.length);
+    return plannedFrames(song.buffer, { regions: [...regions], cuts: [...cuts] });
   }
 
   /** Set the regions, computing repeat counts from the target length when in target mode. */
   private commitRegions(regions: LoopRegion[], extra: Partial<AppState> = {}): void {
     const { song, lengthMode, targetSeconds } = this.store.get();
+    const cuts = extra.cuts ?? this.store.get().cuts;
     let next = sortRegions(regions);
     if (song && lengthMode === 'target' && next.length > 0) {
       // never longer than a WAV can hold (at 16-bit, the deepest it can go)
       const cap = maxWavFrames(song.channels, 16);
+      // the repeats are added to the song without its cuts
+      const base = song.duration - cutSeconds({ regions: next, cuts }, song.duration);
       const res = solveRepeats(
         next.map((r) => ({ start: r.start, end: r.end, score: r.score, extra: cycleSeconds(loopPath(r)) - (r.end - r.start) })),
-        song.duration,
+        base,
         targetSeconds,
         cap / song.sampleRate,
       );
       next = next.map((r, i) => (r.repeats === res.repeats[i] ? r : { ...r, repeats: res.repeats[i]! }));
       // the few samples lost to zero-crossing snaps can add up to a second or two over thousands of repeats
-      for (let guard = 0; guard < 50 && this.plannedFrames(next) > cap; guard++) {
+      for (let guard = 0; guard < 50 && this.plannedFrames(next, cuts) > cap; guard++) {
         let pick = -1;
         next.forEach((r, i) => {
           if (r.repeats > 1 && (pick < 0 || r.end - r.start > next[pick]!.end - next[pick]!.start)) pick = i;
@@ -900,7 +971,8 @@ export class App {
     if (!song || mode === lengthMode) return;
     if (mode === 'target') {
       const ext = extendedDuration(this.plan(), song.duration);
-      this.store.set({ lengthMode: mode, targetSeconds: Math.max(Math.round(ext), Math.ceil(song.duration)) });
+      const base = song.duration - cutSeconds(this.plan(), song.duration);
+      this.store.set({ lengthMode: mode, targetSeconds: Math.max(Math.round(ext), Math.ceil(base)) });
     } else {
       this.store.set({ lengthMode: mode });
     }
@@ -942,9 +1014,9 @@ export class App {
         want = { start, end: Math.min(song.duration, start + len) };
       }
     }
-    const fit = fitSpan(regions, want, song.duration, MIN_REGION_SECONDS);
+    const fit = fitSpan(this.obstacles(), want, song.duration, MIN_REGION_SECONDS);
     if (!fit) {
-      this.notify('That span overlaps an existing loop or is too short. Select a free span and try again.');
+      this.notify('That span overlaps an existing loop or cut, or is too short. Select a free span and try again.');
       return null;
     }
     const id = newRegionId();
@@ -968,11 +1040,11 @@ export class App {
     if (!current) return;
     const next = { ...current, ...patch };
     if (patch.start !== undefined || patch.end !== undefined) {
-      const fit = fitSpan(regions, { start: next.start, end: next.end }, song.duration, MIN_REGION_SECONDS, id);
+      const fit = fitSpan(this.obstacles(), { start: next.start, end: next.end }, song.duration, MIN_REGION_SECONDS, id);
       if (!fit) {
         // Refuse: snap the view back to the model.
         this.commitRegions([...regions]);
-        this.notify('Loops cannot overlap. The edit was refused.');
+        this.notify('Loops cannot overlap each other or a cut. The edit was refused.');
         return;
       }
       next.start = fit.start;
@@ -1012,22 +1084,9 @@ export class App {
 
   /** Why a loop with these points is not allowed, or null. Exact times are never clamped: a bad one is refused. */
   private checkLoopPoints(id: string, start: number, end: number, edge: Edge): string | null {
-    const { song, regions } = this.store.get();
+    const { song, regions, cuts } = this.store.get();
     if (!song) return 'Load a song first.';
-    const value = edge === 'start' ? start : end;
-    if (!Number.isFinite(value)) return 'That is not a time.';
-    if (value < 0) return `A loop cannot go before the start of the song (${formatClock(0)}).`;
-    if (value > song.duration + 1e-9) return `Past the end of the song (${formatClock(song.duration)}).`;
-    if (end <= start + 1e-9) {
-      return edge === 'start' ? `Start must be before end (${formatClock(end)}).` : `End must be after start (${formatClock(start)}).`;
-    }
-    if (end - start < MIN_REGION_SECONDS - 1e-9) return `A loop must be at least ${MIN_REGION_SECONDS} s long.`;
-    const sorted = sortRegions(regions);
-    const clash = sorted.find((r) => r.id !== id && r.start < end - 1e-9 && r.end > start + 1e-9);
-    if (clash) {
-      return `Overlaps Loop ${sorted.indexOf(clash) + 1} (${formatClock(clash.start)}\u2013${formatClock(clash.end)}).`;
-    }
-    return null;
+    return checkSpanPoints({ what: 'loop', id, start, end, edge, duration: song.duration, regions, cuts });
   }
 
   /**
@@ -1064,8 +1123,13 @@ export class App {
 
   /** I and O: the playhead becomes the start or end of the selected loop, or of the waveform selection. */
   private markFromPlayhead(edge: Edge): void {
-    const { song, selectedId, regions, selection } = this.store.get();
+    const { song, selectedId, regions, cuts, selection } = this.store.get();
     if (!song) return;
+    if (selectedId && cuts.some((c) => c.id === selectedId)) {
+      const refused = this.editCutEdge(selectedId, edge, { type: 'playhead' });
+      if (refused) this.notify(refused);
+      return;
+    }
     if (selectedId && regions.some((r) => r.id === selectedId)) {
       const refused = this.editLoopEdge(selectedId, edge, { type: 'playhead' });
       if (refused) this.notify(refused);
@@ -1139,6 +1203,116 @@ export class App {
     if (previewingId === id) this.stopAux();
     this.commitRegions(
       regions.filter((r) => r.id !== id),
+      { selectedId: selectedId === id ? null : selectedId },
+    );
+  }
+
+  // ---- cuts (SPEC-v1.3.md 2) -----------------------------------------------------
+
+  /** Set the cuts (kept in song order); target-length mode re-solves the repeats for the shorter song. */
+  private commitCuts(cuts: Cut[], extra: Partial<AppState> = {}): void {
+    this.commitRegions(this.store.get().regions, { ...extra, cuts: sortCuts(cuts) });
+  }
+
+  /** The length of a cut that has no span of its own: one bar, or 2 s without a steady beat. */
+  private defaultCutSeconds(): number {
+    const { grid, song } = this.store.get();
+    const duration = song?.duration ?? 2;
+    return Math.min(grid.steady ? grid.barSeconds : 2, duration / 2);
+  }
+
+  /**
+   * X and Cut selection: take the waveform selection out of the extended song. With no selection, a short cut (one bar)
+   * opens at the playhead, or in the free song after it when the playhead is in a loop or a cut, to be set with the time
+   * fields. A selection that overlaps a loop or a cut is refused, with the reason.
+   */
+  cutSelection(): string | null {
+    const { song, selection, grid } = this.store.get();
+    if (!song) return null;
+    let want = selection;
+    if (!want) {
+      const at = this.originalPlayhead();
+      const len = this.defaultCutSeconds();
+      const gaps = freeGaps(this.obstacles(), song.duration).filter((g) => g.end - g.start >= MIN_CUT_SECONDS);
+      const gap = gaps.find((g) => g.end > at + MIN_CUT_SECONDS) ?? gaps[gaps.length - 1];
+      if (!gap) {
+        this.notify('There is no free span of the song left to cut.');
+        return null;
+      }
+      const from = Math.max(gap.start, grid.steady ? snapTime(grid, at, true) : at);
+      const start = Math.max(gap.start, Math.min(from, gap.end - Math.min(len, gap.end - gap.start)));
+      want = { start: roundMs(start), end: roundMs(Math.min(gap.end, start + len)) };
+    }
+    return this.addCut(want);
+  }
+
+  addCut(span: Span): string | null {
+    const { song, cuts } = this.store.get();
+    if (!song) return null;
+    const start = Math.max(0, span.start);
+    const end = Math.min(song.duration, span.end);
+    const refused = this.checkCutPoints('', start, end, 'end');
+    if (refused) {
+      this.notify(refused);
+      return null;
+    }
+    const id = newCutId();
+    this.commitCuts([...cuts, { id, start, end }], { selectedId: id, selection: null });
+    return id;
+  }
+
+  /** Why a cut with these points is not allowed, or null (same rules and wording as loops; 50 ms at least). */
+  private checkCutPoints(id: string, start: number, end: number, edge: Edge): string | null {
+    const { song, regions, cuts } = this.store.get();
+    if (!song) return 'Load a song first.';
+    return checkSpanPoints({ what: 'cut', id, start, end, edge, duration: song.duration, regions, cuts });
+  }
+
+  /** A cut's edges moved by dragging (snapped to bars unless Shift is held). Refused when it would overlap. */
+  private updateCut(id: string, patch: Partial<Cut>): void {
+    const { song, cuts } = this.store.get();
+    if (!song) return;
+    const current = cuts.find((c) => c.id === id);
+    if (!current) return;
+    const next = { ...current, ...patch };
+    const fit = fitSpan(this.obstacles(), { start: next.start, end: next.end }, song.duration, MIN_CUT_SECONDS, id);
+    if (!fit) {
+      this.commitCuts([...cuts]);
+      this.notify('Cuts cannot overlap loops or other cuts. The edit was refused.');
+      return;
+    }
+    this.commitCuts(cuts.map((c) => (c.id === id ? { ...next, start: fit.start, end: fit.end } : c)));
+  }
+
+  /** Move a cut's start or end to an exact time (typed, nudged, from the playhead): exact, never snapped, refused when not allowed. */
+  editCutEdge(id: string, edge: Edge, edit: EdgeEdit): string | null {
+    const { song, cuts } = this.store.get();
+    if (!song) return 'Load a song first.';
+    const cut = cuts.find((c) => c.id === id);
+    if (!cut) return 'That cut is gone.';
+    const current = cut[edge];
+    let value: number;
+    if (edit.type === 'time') value = edit.seconds;
+    else if (edit.type === 'ms') value = current + edit.delta;
+    else if (edit.type === 'beat') {
+      const len = this.beatLengthAt(current, edit.dir);
+      if (len === null) return 'There is no steady beat to nudge by.';
+      value = current + edit.dir * len;
+    } else value = this.originalPlayhead();
+    value = roundMs(value);
+    const start = edge === 'start' ? value : cut.start;
+    const end = edge === 'end' ? value : cut.end;
+    const refused = this.checkCutPoints(id, start, end, edge);
+    if (refused) return refused;
+    if (Math.round(value * 1000) === Math.round(current * 1000)) return null;
+    this.commitCuts(cuts.map((c) => (c.id === id ? { ...c, start, end } : c)));
+    return null;
+  }
+
+  removeCut(id: string): void {
+    const { cuts, selectedId } = this.store.get();
+    this.commitCuts(
+      cuts.filter((c) => c.id !== id),
       { selectedId: selectedId === id ? null : selectedId },
     );
   }
@@ -1323,19 +1497,35 @@ export class App {
 
   /** Hear the jump from the span's end back to its start. */
   private async auditionSpan(key: string, span: PreviewRegion): Promise<void> {
+    await this.playSnippet(key, (buffer, crossfadeMs) => renderSeamSnippet(buffer, span, { crossfadeMs }));
+  }
+
+  /** Hear a cut: 4 s before the join through 4 s after it, as the extended song has it (SPEC-v1.3.md 2.2). */
+  async auditionCut(id: string): Promise<void> {
+    const cut = this.store.get().cuts.find((c) => c.id === id);
+    if (!cut) return;
+    await this.playSnippet(id, (buffer, crossfadeMs) => renderCutSnippet(buffer, cut, { crossfadeMs }));
+  }
+
+  /** Play a short snippet of the song (seam or cut audition) in place of the main playback. */
+  private async playSnippet(
+    key: string,
+    make: (buffer: DecodedSong['buffer'], crossfadeMs: number) => ReturnType<typeof renderSeamSnippet>,
+  ): Promise<void> {
     const { song, seamMs } = this.store.get();
     if (!song) return;
     this.stopAux();
     this.player.pause();
     let snip: ReturnType<typeof renderSeamSnippet>;
     try {
-      snip = renderSeamSnippet(song.buffer, span, { crossfadeMs: seamMs });
+      snip = make(song.buffer, seamMs);
     } catch (err) {
       this.notify(err instanceof Error ? err.message : String(err));
       return;
     }
     this.aux = { kind: 'seam', map: snip.map, sampleRate: snip.sampleRate };
-    if (this.store.get().regions.some((r) => r.id === key)) this.store.set({ selectedId: key });
+    const { regions, cuts } = this.store.get();
+    if (regions.some((r) => r.id === key) || cuts.some((c) => c.id === key)) this.store.set({ selectedId: key });
     await this.player.playAux(snip);
     this.aux = null;
     this.renderTime();

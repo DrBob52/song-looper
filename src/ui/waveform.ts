@@ -1,7 +1,7 @@
 import WaveSurfer from 'wavesurfer.js';
 import RegionsPlugin from 'wavesurfer.js/plugins/regions';
 import type { Region } from 'wavesurfer.js/plugins/regions';
-import type { LoopRegion, Span } from '../model';
+import type { Cut, LoopRegion, Span } from '../model';
 import { cssVar } from './dom';
 import { loopResolved } from './loopColors';
 
@@ -14,13 +14,15 @@ export interface WaveformCallbacks {
   onSelection(sel: Span): void;
   /** A loop region's edges changed (drag finished). */
   onRegionEdit(id: string, start: number, end: number): void;
+  /** A cut's edges changed (drag finished). */
+  onCutEdit(id: string, start: number, end: number): void;
   onRegionSelect(id: string): void;
   /** Snap function for a region while dragging (null = no snapping). */
   getSnap(id: string): ((t: number) => number) | null;
   /** Allowed [lo, hi] range for a loop region so it cannot overlap its neighbours. */
   getBounds(id: string): Span | null;
-  /** Minimum region length in seconds (one bar or beat when snapping). */
-  getMinLength(id: string): number;
+  /** Minimum region length in seconds (one bar or beat when snapping; `free` when Shift is held and snapping is off). */
+  getMinLength(id: string, free?: boolean): number;
 }
 
 export interface GridData {
@@ -67,6 +69,7 @@ export class WaveformView {
   private beatPeriod = 0.5;
   private barPeriod = 2;
   private model = new Map<string, LoopRegion>();
+  private cutModel = new Map<string, Cut>();
   private contentText = new Map<string, string>();
   private followCursor = true;
   private selectedId: string | null = null;
@@ -106,7 +109,7 @@ export class WaveformView {
     this.regions.on('region-update', (region, side) => this.onRegionUpdate(region, side));
     this.regions.on('region-updated', (region) => this.onRegionUpdated(region));
     this.regions.on('region-clicked', (region) => {
-      if (this.model.has(region.id)) this.cb.onRegionSelect(region.id);
+      if (this.model.has(region.id) || this.cutModel.has(region.id)) this.cb.onRegionSelect(region.id);
     });
     this.regions.on('region-created', (region) => this.onRegionCreated(region));
 
@@ -159,7 +162,7 @@ export class WaveformView {
     const ink = cssVar('--ink') || '#1d1915';
     this.ws.setOptions({ waveColor: ink, progressColor: ink, cursorColor: cssVar('--label-red') || '#c6372c' });
     // loop colours, the selection and the highlight follow the theme too
-    this.setRegions([...this.model.values()], this.selectedId);
+    this.setRegions([...this.model.values()], this.selectedId, [...this.cutModel.values()]);
     const selection = this.findRegion(SELECTION_ID);
     selection?.setOptions({ color: hexToRgba(cssVar('--mustard') || '#d6a03d', 0.3) });
     const highlight = this.findRegion(HIGHLIGHT_ID);
@@ -277,11 +280,12 @@ export class WaveformView {
     return this.regions.getRegions().find((r) => r.id === id);
   }
 
-  /** Reconcile wavesurfer regions with the loop model. */
-  setRegions(loops: LoopRegion[], selectedId: string | null): void {
+  /** Reconcile wavesurfer regions with the loop model and the cuts (`selectedId` may name either). */
+  setRegions(loops: LoopRegion[], selectedId: string | null, cuts: Cut[] = []): void {
     this.model = new Map(loops.map((l) => [l.id, l]));
+    this.cutModel = new Map(cuts.map((c) => [c.id, c]));
     this.selectedId = selectedId;
-    const wanted = new Set(loops.map((l) => l.id));
+    const wanted = new Set([...loops.map((l) => l.id), ...cuts.map((c) => c.id)]);
     for (const r of [...this.regions.getRegions()]) {
       if (r.id === SELECTION_ID || r.id === HIGHLIGHT_ID) continue;
       if (!wanted.has(r.id)) {
@@ -324,6 +328,39 @@ export class WaveformView {
       }
       if (loop.id !== this.dragging) {
         this.tracks.set(loop.id, { lastStart: loop.start, lastEnd: loop.end, rawStart: loop.start, rawEnd: loop.end });
+      }
+    });
+    // cuts: dark hatched regions with a scissors label; dragged and resized like loops
+    cuts.forEach((cut, index) => {
+      const selected = cut.id === selectedId;
+      const color = cssVar('--cut-fill') || 'rgba(29, 25, 21, 0.55)';
+      let r = this.findRegion(cut.id);
+      if (!r) {
+        r = this.regions.addRegion({ id: cut.id, start: cut.start, end: cut.end, color, drag: true, resize: true });
+      } else if (cut.id === this.dragging) {
+        r.setOptions({ color });
+      } else {
+        r.setOptions({ start: cut.start, end: cut.end, color });
+      }
+      const text = `\u2702 ${index + 1}`;
+      if (this.contentText.get(cut.id) !== text) {
+        this.contentText.set(cut.id, text);
+        const label = document.createElement('span');
+        label.textContent = text;
+        label.style.cssText = 'color:var(--cut-ink,#fff);font-weight:700;padding:1px 3px;border-radius:2px;background:var(--cut-label-bg,rgba(0,0,0,.5));';
+        r.setContent(label);
+      }
+      if (r.element) {
+        // hatching over the dark fill, a 2 px top band in the cut's line colour, an outline when selected
+        r.element.style.backgroundImage = 'repeating-linear-gradient(135deg, var(--cut-line, rgba(255,255,255,.4)) 0 2px, transparent 2px 7px)';
+        r.element.style.borderTop = '2px solid var(--cut-line, #fff)';
+        r.element.style.outline = selected ? '2px solid var(--cut-line, #fff)' : 'none';
+        r.element.style.outlineOffset = '-2px';
+        r.element.dataset.regionId = cut.id;
+        r.element.dataset.kind = 'cut';
+      }
+      if (cut.id !== this.dragging) {
+        this.tracks.set(cut.id, { lastStart: cut.start, lastEnd: cut.end, rawStart: cut.start, rawEnd: cut.end });
       }
     });
   }
@@ -428,7 +465,7 @@ export class WaveformView {
     track.rawEnd += region.end - track.lastEnd;
 
     const snap = this.shiftDown ? null : this.cb.getSnap(region.id);
-    const minLen = this.cb.getMinLength(region.id);
+    const minLen = this.cb.getMinLength(region.id, this.shiftDown);
     const bounds = this.cb.getBounds(region.id);
     let start = track.rawStart;
     let end = track.rawEnd;
@@ -484,6 +521,7 @@ export class WaveformView {
     }
     if (region.id === SELECTION_ID) this.cb.onSelection({ start: region.start, end: region.end });
     else if (this.model.has(region.id)) this.cb.onRegionEdit(region.id, region.start, region.end);
+    else if (this.cutModel.has(region.id)) this.cb.onCutEdit(region.id, region.start, region.end);
   }
 
   destroy(): void {

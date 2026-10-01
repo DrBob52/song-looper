@@ -46,6 +46,11 @@
   --scrim: rgba(29, 25, 21, 0.5);
   --region-alpha: 0.3; /* loop regions on the waveform: unselected and selected */
   --region-alpha-on: 0.44;
+  /* cuts: dark hatched regions on the waveform with a scissors label */
+  --cut-fill: rgba(29, 25, 21, 0.62);
+  --cut-line: rgba(248, 242, 231, 0.5);
+  --cut-ink: #ffffff;
+  --cut-label-bg: rgba(29, 25, 21, 0.7);
   --grain: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='240' height='240'%3E%3Cfilter id='n' x='0' y='0' width='100%25' height='100%25'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='.85' numOctaves='2' stitchTiles='stitch'/%3E%3CfeColorMatrix values='0 0 0 0 .32 0 0 0 0 .24 0 0 0 0 .16 0 0 0 1 0'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)' opacity='.04'/%3E%3C/svg%3E");
 
   --font-display: 'Archivo', 'Arial Narrow', system-ui, sans-serif; /* width axis: 62-125 */
@@ -92,6 +97,10 @@
     --scrim: rgba(0, 0, 0, 0.62);
     --region-alpha: 0.2;
     --region-alpha-on: 0.34;
+    --cut-fill: rgba(0, 0, 0, 0.62);
+    --cut-line: rgba(239, 228, 211, 0.5);
+    --cut-ink: #efe4d3;
+    --cut-label-bg: rgba(0, 0, 0, 0.7);
     --grain: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='240' height='240'%3E%3Cfilter id='n' x='0' y='0' width='100%25' height='100%25'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='.85' numOctaves='2' stitchTiles='stitch'/%3E%3CfeColorMatrix values='0 0 0 0 .94 0 0 0 0 .86 0 0 0 0 .72 0 0 0 1 0'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)' opacity='.04'/%3E%3C/svg%3E");
   }
 }
@@ -132,6 +141,10 @@
   --scrim: rgba(0, 0, 0, 0.62);
   --region-alpha: 0.2;
   --region-alpha-on: 0.34;
+  --cut-fill: rgba(0, 0, 0, 0.62);
+  --cut-line: rgba(239, 228, 211, 0.5);
+  --cut-ink: #efe4d3;
+  --cut-label-bg: rgba(0, 0, 0, 0.7);
   --grain: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='240' height='240'%3E%3Cfilter id='n' x='0' y='0' width='100%25' height='100%25'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='.85' numOctaves='2' stitchTiles='stitch'/%3E%3CfeColorMatrix values='0 0 0 0 .94 0 0 0 0 .86 0 0 0 0 .72 0 0 0 1 0'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)' opacity='.04'/%3E%3C/svg%3E");
 }
 
@@ -1290,6 +1303,89 @@ input.nf-input:disabled {
   font-size: 0.8rem;
 }
 
+/* ---- cuts: spans of the song the extended cut skips ---- */
+
+.card-actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px 8px;
+}
+
+.cut-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: grid;
+  gap: 12px;
+}
+
+.cut {
+  display: grid;
+  gap: 8px;
+  padding: 12px 14px;
+  border: 1px solid var(--rule);
+  border-left: 4px solid var(--ink);
+  border-radius: 6px;
+  background: var(--paper);
+  cursor: pointer;
+  transition:
+    transform 0.15s ease,
+    box-shadow 0.15s ease;
+}
+
+.cut:hover {
+  transform: translateY(-1px);
+  box-shadow: var(--shadow-lift);
+}
+
+.cut.selected {
+  border-color: var(--ink);
+  box-shadow: 0 0 0 2px var(--mustard);
+}
+
+.cut-head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 4px 12px;
+}
+
+.cut-head strong {
+  font-family: var(--font-display);
+  font-weight: 800;
+  font-stretch: 112%;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  font-size: 0.95rem;
+}
+
+/* the scissors on a hatched dark tile, like the cut on the waveform */
+.cut-glyph {
+  display: inline-grid;
+  place-items: center;
+  width: 28px;
+  height: 28px;
+  border-radius: 6px;
+  color: var(--cut-ink);
+  background-color: var(--cut-label-bg);
+  background-image: repeating-linear-gradient(135deg, var(--cut-line) 0 2px, transparent 2px 7px);
+  line-height: 1;
+}
+
+.cut-times {
+  display: grid;
+  gap: 6px;
+}
+
+.cut-actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 2px 4px;
+  margin-left: -9px;
+}
+
 /* ---- suggestions: a tracklist ---- */
 
 .side-tag {
@@ -1466,6 +1562,30 @@ input.nf-input:disabled {
   background: var(--rule);
   border: 1.5px solid var(--ink);
   cursor: pointer;
+}
+
+/* the scissors above a join where the extended song skips a cut */
+.tl-marks {
+  position: relative;
+  height: 16px;
+  margin-bottom: 2px;
+}
+
+.tl-cut {
+  position: absolute;
+  top: 0;
+  transform: translateX(-50%);
+  font: 700 12px/16px var(--font-body);
+  color: var(--ink);
+  cursor: help;
+}
+
+.tl-cut.at-start {
+  transform: none;
+}
+
+.tl-cut.at-end {
+  transform: translateX(-100%);
 }
 
 /* fine grooves over everything */

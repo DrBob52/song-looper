@@ -1,4 +1,4 @@
-import type { JumpPlan, LoopRegion, Plan } from '../model';
+import type { JumpPlan, LoopRegion, Plan, Span } from '../model';
 import { MAX_REPEATS } from '../model';
 import { RENDER_CONFIG } from './config';
 import { cycleSeconds, loopPath } from './path';
@@ -26,6 +26,10 @@ export interface Segment {
   /** 1-based repeat number within the region. */
   repeat?: number;
   repeats?: number;
+  /** The cut that was skipped right before this segment (the join is at its start): a ✂ mark on the strip. */
+  skipBefore?: Span;
+  /** The cut that runs to the end of the song, right after this last segment. */
+  skipAfter?: Span;
 }
 
 /**
@@ -77,23 +81,108 @@ export function planRegions(plan: Plan, duration: number): PlannedRegion[] {
   return out;
 }
 
+// ---------------------------------------------------------------------------
+// Cuts (SPEC-v1.3.md 2): spans of the original song that the extended song skips
+// ---------------------------------------------------------------------------
+
+/**
+ * The cuts as the renderer uses them: clipped to [0, duration], with the loops' own spans taken out (a cut never plays
+ * inside a loop), sorted, and merged where they touch or overlap. Works for seconds and for sample indices alike.
+ */
+export function mergeCuts(cuts: readonly Span[] | undefined, duration: number, loops: readonly Span[] = []): Span[] {
+  const pieces: Span[] = [];
+  const holes = [...loops].sort((a, b) => a.start - b.start);
+  for (const c of cuts ?? []) {
+    let rest: Span[] = [{ start: Math.max(0, c.start), end: Math.min(duration, c.end) }];
+    for (const h of holes) {
+      const next: Span[] = [];
+      for (const r of rest) {
+        if (h.end <= r.start || h.start >= r.end) next.push(r);
+        else {
+          if (h.start > r.start) next.push({ start: r.start, end: h.start });
+          if (h.end < r.end) next.push({ start: h.end, end: r.end });
+        }
+      }
+      rest = next;
+    }
+    for (const r of rest) if (r.end - r.start > 1e-12) pieces.push(r);
+  }
+  pieces.sort((a, b) => a.start - b.start);
+  const out: Span[] = [];
+  for (const c of pieces) {
+    const last = out[out.length - 1];
+    if (last && c.start <= last.end + 1e-12) last.end = Math.max(last.end, c.end);
+    else out.push({ ...c });
+  }
+  return out;
+}
+
+/** A stretch of the song that plays as one piece, and the cut taken out right before it (if any). */
+export interface Piece extends Span {
+  skip?: Span;
+}
+
+/**
+ * The stretch [from, to) of the song with the cuts taken out: the pieces that play, each with the cut that precedes it,
+ * and `trailing` when a cut runs right up to `to` (so what follows the stretch does not follow the song). `cuts` must be
+ * sorted and merged (see mergeCuts).
+ */
+export function cutStretch(from: number, to: number, cuts: readonly Span[]): { pieces: Piece[]; trailing?: Span } {
+  const pieces: Piece[] = [];
+  let pos = from;
+  let skip: Span | undefined;
+  for (const c of cuts) {
+    if (c.end <= from || c.start >= to) continue;
+    const s = Math.max(c.start, pos);
+    const e = Math.min(c.end, to);
+    if (s > pos) {
+      pieces.push(skip ? { start: pos, end: s, skip } : { start: pos, end: s });
+    }
+    skip = { start: s, end: e };
+    pos = Math.max(pos, e);
+  }
+  if (to > pos) {
+    pieces.push(skip ? { start: pos, end: to, skip } : { start: pos, end: to });
+    return { pieces };
+  }
+  return skip ? { pieces, trailing: skip } : { pieces };
+}
+
+/** The merged cuts of a plan, as the renderer uses them. */
+export function planCuts(plan: Plan, duration: number): Span[] {
+  const loops = planRegions(plan, duration).map((r) => ({ start: r.start, end: r.end }));
+  return mergeCuts(plan.cuts, duration, loops);
+}
+
+/** Total seconds that the cuts of a plan take out of the song. */
+export function cutSeconds(plan: Plan, duration: number): number {
+  return planCuts(plan, duration).reduce((sum, c) => sum + (c.end - c.start), 0);
+}
+
 /**
  * The output layout as a list of segments over the original:
- * [0, r1.start) -> r1 x repeats1 -> [r1.end, r2.start) -> ... -> [rk.end, duration).
- * repeats = 1 everywhere gives back the original song. Every repeat but a loop's last is followed by its bridge, if any.
+ * [0, r1.start) -> r1 x repeats1 -> [r1.end, r2.start) -> ... -> [rk.end, duration), with every cut skipped (the plain
+ * stretches around a cut are separate segments; the one after it says what was skipped).
+ * repeats = 1 and no cuts gives back the original song. Every repeat but a loop's last is followed by its bridge, if any.
+ * This is the song before the Ending (SPEC-v1.3.md 3) trims it.
  */
 export function buildTimeline(plan: Plan, duration: number): Segment[] {
   const regions = planRegions(plan, duration);
+  const cuts = mergeCuts(plan.cuts, duration, regions.map((r) => ({ start: r.start, end: r.end })));
   const segments: Segment[] = [];
   let out = 0;
   let cursor = 0;
-  const pushOriginal = (start: number, end: number): void => {
-    if (end <= start) return;
-    segments.push({ kind: 'original', start, end, outStart: out, outEnd: out + (end - start) });
-    out += end - start;
+  /** Plain song from `from` to `to`, minus the cuts in it. Returns the cut that runs up to `to`, if any. */
+  const pushOriginal = (from: number, to: number): Span | undefined => {
+    const { pieces, trailing } = cutStretch(from, to, cuts);
+    for (const p of pieces) {
+      segments.push({ kind: 'original', start: p.start, end: p.end, outStart: out, outEnd: out + (p.end - p.start), ...(p.skip ? { skipBefore: p.skip } : {}) });
+      out += p.end - p.start;
+    }
+    return trailing;
   };
   for (const r of regions) {
-    pushOriginal(cursor, r.start);
+    const skipped = pushOriginal(cursor, r.start);
     const len = r.end - r.start;
     for (let k = 1; k <= r.repeats; k++) {
       segments.push({
@@ -105,6 +194,7 @@ export function buildTimeline(plan: Plan, duration: number): Segment[] {
         regionId: r.id,
         repeat: k,
         repeats: r.repeats,
+        ...(k === 1 && skipped ? { skipBefore: skipped } : {}),
       });
       out += len;
       if (k === r.repeats) continue;
@@ -127,17 +217,29 @@ export function buildTimeline(plan: Plan, duration: number): Segment[] {
     }
     cursor = r.end;
   }
-  pushOriginal(cursor, duration);
+  const trailing = pushOriginal(cursor, duration);
+  const last = segments[segments.length - 1];
+  if (trailing && last) last.skipAfter = trailing;
   return segments;
 }
 
-/** Length of the extended output in seconds: D + sum((repeats - 1) * (loop + bridge)). */
-export function extendedDuration(plan: Plan, duration: number): number {
-  let total = duration;
+/**
+ * Length of the extended output in seconds before the Ending trims it: D - cuts + sum((repeats - 1) * (loop + bridge)).
+ * This is the timeline the End at time refers to.
+ */
+export function naturalDuration(plan: Plan, duration: number): number {
+  let total = duration - cutSeconds(plan, duration);
   for (const r of planRegions(plan, duration)) {
     total += (r.repeats - 1) * cycleSeconds(r);
   }
   return total;
+}
+
+/** Length of the extended output in seconds as it is exported: the natural length, or the End at point when that is earlier. */
+export function extendedDuration(plan: Plan, duration: number): number {
+  const natural = naturalDuration(plan, duration);
+  const end = plan.ending?.endAt;
+  return end !== null && end !== undefined ? Math.min(natural, Math.max(0, end)) : natural;
 }
 
 /** Map a position in the extended output back to the original song. */
@@ -167,6 +269,11 @@ export function originalToExtended(timeline: Segment[], t: number): number {
   }
   const last = timeline[timeline.length - 1];
   if (!last) return 0;
+  // Inside a cut: the song jumps over it, so it is the join where the next piece begins.
+  for (const seg of timeline) {
+    if (seg.kind === 'bridge' || (seg.kind === 'repeat' && seg.repeat !== 1)) continue;
+    if (seg.start > t) return seg.outStart;
+  }
   // Past the end, or only reachable after a region's later repeats: clamp to the end.
   return t >= last.end ? last.outEnd : 0;
 }
@@ -175,6 +282,8 @@ export function originalToExtended(timeline: Segment[], t: number): number {
 export function planKey(plan: Plan, duration: number, crossfadeMs: number): string {
   const regions = planRegions(plan, duration);
   const f = (v: number | undefined): string | number => (v === undefined ? 0 : v.toFixed(6));
+  const cuts = planCuts(plan, duration);
+  const ending = plan.ending && (plan.ending.endAt !== null || plan.ending.fadeSeconds > 0) ? plan.ending : null;
   return JSON.stringify([
     crossfadeMs,
     regions.map((r) => [
@@ -183,6 +292,9 @@ export function planKey(plan: Plan, duration: number, crossfadeMs: number): stri
       r.repeats,
       r.jumps.map((j) => [f(j.from), f(j.to), f(j.fadeMs), f(j.levelDb), f(j.rampSeconds)]),
     ]),
+    // cuts and the ending only when there are some: a plan without them keeps the key it always had
+    ...(cuts.length ? [cuts.map((c) => [c.start.toFixed(6), c.end.toFixed(6)])] : []),
+    ...(ending ? [['end', ending.endAt === null ? null : f(ending.endAt), f(ending.fadeSeconds)]] : []),
   ]);
 }
 
@@ -455,6 +567,27 @@ export interface PartAccess {
   readonly reachBefore: number;
   /** ...and the most that a fade reaches after it. */
   readonly reachAfter: number;
+  /** Frames of fade-in at the very start of the output (a cut at the start of the song), and of fade-out up to its end. */
+  readonly fadeIn?: number;
+  readonly fadeOut?: number;
+}
+
+/** Seconds of the short fade that a cut at the very start (in) or end (out) of the song gets, to avoid a click. */
+export const CUT_FADE_SECONDS = 0.01;
+
+/**
+ * The gain of sample `i` of a fade-out of `frames` samples that ends exactly at the end point: a cosine (equal-power)
+ * ramp from 1 at the first sample, through cos(pi/4) = 0.707 at the middle, to exactly 0 at the last sample.
+ */
+export function fadeOutGain(i: number, frames: number): number {
+  if (frames <= 1 || i >= frames - 1) return 0;
+  if (i <= 0) return 1;
+  return Math.cos((Math.PI / 2) * (i / (frames - 1)));
+}
+
+/** The mirror image: exactly 0 at the first sample, 1 at the last. */
+export function fadeInGain(i: number, frames: number): number {
+  return fadeOutGain(frames - 1 - i, frames);
 }
 
 /** Fades by jump, so that every play of one seam shares one window (and one correlation measurement). */
@@ -467,7 +600,12 @@ function fadeReach(sampleRate: number, fadeMs: number | undefined, options: Pick
 }
 
 /** `PartAccess` over an explicit list of parts. */
-export function partsAccess(parts: readonly Part[], sampleRate: number, options: RenderOptions = {}): PartAccess & { starts: number[] } {
+export function partsAccess(
+  parts: readonly Part[],
+  sampleRate: number,
+  options: RenderOptions = {},
+  envelope: { fadeIn?: number; fadeOut?: number; endFrames?: number } = {},
+): PartAccess & { starts: number[] } {
   const starts: number[] = [];
   let total = 0;
   let reachBefore = 0;
@@ -481,12 +619,15 @@ export function partsAccess(parts: readonly Part[], sampleRate: number, options:
       reachAfter = Math.max(reachAfter, half);
     }
   }
+  total = Math.min(total, envelope.endFrames ?? Infinity);
   return {
     count: parts.length,
     total,
     starts,
     reachBefore,
     reachAfter,
+    fadeIn: Math.min(total, envelope.fadeIn ?? 0),
+    fadeOut: Math.min(total, envelope.fadeOut ?? 0),
     part: (i) => parts[i]!,
     startOf: (i) => starts[i]!,
     indexAt: (pos) => {
@@ -595,6 +736,11 @@ export function renderPartsRange(
         }
       }
     }
+    // the start and end of the song: a short fade-in after a cut at the start, and the fade-out that ends at the end point
+    const fadeIn = access.fadeIn ?? 0;
+    const fadeOut = access.fadeOut ?? 0;
+    for (let q = from; q < Math.min(to, fadeIn); q++) out[q - from] = out[q - from]! * fadeInGain(q, fadeIn);
+    for (let q = Math.max(from, total - fadeOut); q < to; q++) out[q - from] = out[q - from]! * fadeOutGain(q - (total - fadeOut), fadeOut);
     channels.push(out);
     options.onProgress?.((c + 1) / nCh);
   }
@@ -605,8 +751,13 @@ export function renderPartsRange(
  * Copy the parts one after another and give every jump its seam (see renderPartsRange). The whole output is built in
  * memory; for long outputs use `RangeRenderer`.
  */
-export function stitch(buffer: AudioBufferLike, parts: Part[], options: RenderOptions = {}): Stitched {
-  const access = partsAccess(parts, buffer.sampleRate, options);
+export function stitch(
+  buffer: AudioBufferLike,
+  parts: Part[],
+  options: RenderOptions = {},
+  envelope: { fadeIn?: number; fadeOut?: number; endFrames?: number } = {},
+): Stitched {
+  const access = partsAccess(parts, buffer.sampleRate, options, envelope);
   const channels = renderPartsRange(buffer, access, 0, access.total, options);
   return { channels, partStarts: access.starts };
 }
@@ -631,61 +782,181 @@ export function regionParts(r: SampleRegion, cursor: number): Part[] {
 }
 
 // ---------------------------------------------------------------------------
+// Cuts and the ending in the sample domain
+// ---------------------------------------------------------------------------
+
+/** A cut as source sample indices: the span [start, end) that the extended song skips. */
+export interface SampleCut {
+  start: number;
+  end: number;
+}
+
+/** What a plan adds to its loops, in samples: the cuts, where it ends and how long the fade into the end is. */
+export interface PlanExtras {
+  /** Sorted, merged cuts. A join between two pieces is the cut's start (where playing leaves) and end (where it resumes). */
+  cuts?: SampleCut[];
+  /** The extended song ends here (frames), when that is before its natural end. */
+  endFrames?: number;
+  /** Frames of the Ending's fade-out (0 or left out: no fade). */
+  fadeOutFrames?: number;
+}
+
+/**
+ * The cuts and the ending of a plan as sample indices. Every cut join gets the same zero-crossing snap as a loop's
+ * seam (the landing point first, then the departure on a crossing of the same slope), except at the very start and end
+ * of the song, which have no join.
+ */
+export function planExtras(
+  buffer: AudioBufferLike,
+  plan: Plan,
+  options: Pick<RenderOptions, 'snapZeroCrossings'> = {},
+): PlanExtras {
+  const sr = buffer.sampleRate;
+  const length = buffer.length;
+  const toIndex = (t: number): number => Math.min(length, Math.max(0, Math.round(t * sr)));
+  const out: PlanExtras = {};
+  const seconds = planCuts(plan, buffer.duration);
+  if (seconds.length) {
+    const snap = options.snapZeroCrossings ?? true;
+    const radius = Math.round((RENDER_CONFIG.zeroCrossRadiusMs / 1000) * sr);
+    const mid = snap ? makeMid(buffer) : null;
+    const cuts: SampleCut[] = [];
+    let floor = 0;
+    for (const c of seconds) {
+      let start = toIndex(c.start);
+      let end = toIndex(c.end);
+      if (mid) {
+        if (start > 0 && end < length) {
+          const to = snapToZeroCrossing(mid, length, end, radius);
+          start = snapToZeroCrossing(mid, length, start, radius, to.slope).index;
+          end = to.index;
+        } else if (start <= 0 && end < length) end = snapToZeroCrossing(mid, length, end, radius).index;
+        else if (end >= length && start > 0) start = snapToZeroCrossing(mid, length, start, radius).index;
+      }
+      start = Math.max(start, floor);
+      if (end <= start) continue;
+      const last = cuts[cuts.length - 1];
+      if (last && start <= last.end) last.end = Math.max(last.end, end);
+      else cuts.push({ start, end });
+      floor = end;
+    }
+    if (cuts.length) out.cuts = cuts;
+  }
+  const ending = plan.ending;
+  if (ending) {
+    if (ending.endAt !== null && Number.isFinite(ending.endAt)) out.endFrames = Math.max(0, Math.round(ending.endAt * sr));
+    if (ending.fadeSeconds > 0) out.fadeOutFrames = Math.round(ending.fadeSeconds * sr);
+  }
+  return out;
+}
+
+// ---------------------------------------------------------------------------
 // The extended song as a list of parts that is never written out
 // ---------------------------------------------------------------------------
 
-interface RegionLayout {
-  r: SampleRegion;
-  /** Output position where the region's first part (the original before it) starts. */
-  outStart: number;
-  /** Index of that part in the whole list. */
+/** The jump into a piece that follows a cut: a plain seam (the global crossfade, no level ramp). */
+export const PLAIN_JUMP = { fadeMs: undefined, gain: 1, ramp: 0 } as const;
+
+interface PieceBlock {
+  kind: 'piece';
+  start: number;
+  end: number;
+  /** A cut lies right before it: it is entered by a plain jump from the end of the part before. */
+  jump: boolean;
+  /** Index of its part, and where it starts in the output. */
   firstPart: number;
+  outStart: number;
+}
+
+interface LoopBlock {
+  kind: 'loop';
+  r: SampleRegion;
+  /** A cut lies right before the loop: its first play is entered by a plain jump. */
+  enter: boolean;
+  firstPart: number;
+  outStart: number;
+  /** (repeats - 1) cycles of `pieces` parts each, then the final repeat. */
   partCount: number;
-  /** The source position where the region's pre-part starts (the end of the previous region). */
-  cursor: number;
-  preLen: number;
   /** Samples of one cycle, and where each of its pieces starts within it. */
   cycle: number;
   pieceOffsets: number[];
 }
 
+type Block = PieceBlock | LoopBlock;
+
 /**
- * `PartAccess` for a planned render: the same parts as `regionParts` lists (the original before a loop, `repeats - 1`
- * cycles, the loop once more, then the original again), found by arithmetic so that a plan with thousands of repeats
- * needs no list.
+ * `PartAccess` for a planned render: the plain stretches of the song (with the cuts taken out), and for every loop its
+ * `repeats - 1` cycles and the final repeat, found by arithmetic so that a plan with thousands of repeats needs no list.
+ * A piece that follows a cut, and a loop that does, is entered by a plain jump (the Seam fade length, equal-power); a
+ * cut at the very start gives a short fade-in and one at the very end a short fade-out (or the Ending's own fade).
+ * The Ending trims the output (`total`) and fades into it.
  */
 export class PlanParts implements PartAccess {
   readonly count: number;
   readonly total: number;
+  /** Length before the Ending trimmed it. */
+  readonly naturalTotal: number;
   readonly reachBefore: number;
   readonly reachAfter: number;
-  private layouts: RegionLayout[] = [];
-  private tailStart: number;
-  private tailCursor: number;
+  readonly fadeIn: number;
+  readonly fadeOut: number;
+  /** The song starts after a cut / ends with one. */
+  readonly leadingCut: boolean;
+  readonly trailingCut: boolean;
+  private blocks: Block[] = [];
 
   constructor(
     regions: readonly SampleRegion[],
-    private sourceLength: number,
+    sourceLength: number,
     sampleRate: number,
     options: Pick<RenderOptions, 'crossfadeMs'> = {},
+    extras: PlanExtras = {},
   ) {
+    const cuts = extras.cuts ?? [];
     let out = 0;
     let part = 0;
     let cursor = 0;
+    let emitted = false;
+    let leading = false;
     let reachBefore = 0;
     let reachAfter = 0;
+    const plainReach = fadeReach(sampleRate, undefined, options);
+    /** The plain song from `from` to `to` without the cuts; says whether a cut runs right up to `to`. */
+    const addPieces = (from: number, to: number): boolean => {
+      const { pieces, trailing } = cutStretch(from, to, cuts);
+      for (const p of pieces) {
+        const jump = p.skip !== undefined && emitted;
+        if (p.skip !== undefined && !emitted) leading = true;
+        if (jump) {
+          reachBefore = Math.max(reachBefore, plainReach);
+          reachAfter = Math.max(reachAfter, plainReach);
+        }
+        this.blocks.push({ kind: 'piece', start: p.start, end: p.end, jump, firstPart: part, outStart: out });
+        part += 1;
+        out += p.end - p.start;
+        emitted = true;
+      }
+      return trailing !== undefined;
+    };
     for (const r of regions) {
+      const skipped = addPieces(cursor, r.start);
+      if (skipped && !emitted) leading = true;
+      const enter = skipped && emitted;
+      if (enter) {
+        reachBefore = Math.max(reachBefore, plainReach);
+        reachAfter = Math.max(reachAfter, plainReach);
+      }
       const pieceOffsets: number[] = [];
       let cycle = 0;
       for (const p of r.pieces) {
         pieceOffsets.push(cycle);
         cycle += p.end - p.start;
       }
-      const preLen = r.start - cursor;
-      const partCount = 2 + (r.repeats - 1) * r.pieces.length;
-      this.layouts.push({ r, outStart: out, firstPart: part, partCount, cursor, preLen, cycle, pieceOffsets });
-      out += preLen + (r.repeats - 1) * cycle + (r.end - r.start);
+      const partCount = (r.repeats - 1) * r.pieces.length + 1;
+      this.blocks.push({ kind: 'loop', r, enter, firstPart: part, outStart: out, partCount, cycle, pieceOffsets });
+      out += (r.repeats - 1) * cycle + (r.end - r.start);
       part += partCount;
+      emitted = true;
       cursor = r.end;
       for (const j of r.jumps) {
         const half = fadeReach(sampleRate, j.fadeMs, options);
@@ -693,82 +964,129 @@ export class PlanParts implements PartAccess {
         reachAfter = Math.max(reachAfter, half);
       }
     }
-    this.tailStart = out;
-    this.tailCursor = cursor;
-    this.count = part + 1;
-    this.total = out + (this.sourceLength - cursor);
+    const trailingCut = addPieces(cursor, sourceLength);
+    this.leadingCut = leading;
+    this.trailingCut = trailingCut;
+    this.count = part;
+    this.naturalTotal = out;
+    const trimmed = extras.endFrames !== undefined && extras.endFrames < out;
+    this.total = trimmed ? extras.endFrames! : out;
     this.reachBefore = reachBefore;
     this.reachAfter = reachAfter;
+    const cutFade = Math.round(CUT_FADE_SECONDS * sampleRate);
+    this.fadeIn = leading ? Math.min(cutFade, this.total) : 0;
+    const explicit = extras.fadeOutFrames ?? 0;
+    this.fadeOut = Math.min(this.total, explicit > 0 ? explicit : trailingCut && !trimmed ? cutFade : 0);
   }
 
-  private layoutOfPart(i: number): RegionLayout | null {
-    const L = this.layouts;
+  private blockOfPart(i: number): Block {
+    const B = this.blocks;
     let lo = 0;
-    let hi = L.length - 1;
-    if (hi < 0 || i >= L[hi]!.firstPart + L[hi]!.partCount) return null;
+    let hi = B.length - 1;
     while (lo < hi) {
       const mid = (lo + hi + 1) >> 1;
-      if (L[mid]!.firstPart <= i) lo = mid;
+      if (B[mid]!.firstPart <= i) lo = mid;
       else hi = mid - 1;
     }
-    return L[lo]!;
+    return B[lo]!;
   }
 
   part(i: number): Part {
-    const lay = this.layoutOfPart(i);
-    if (!lay) return { start: this.tailCursor, end: this.sourceLength };
-    const { r } = lay;
-    const j = i - lay.firstPart;
+    const blk = this.blockOfPart(i);
+    if (blk.kind === 'piece') return blk.jump ? { start: blk.start, end: blk.end, jump: PLAIN_JUMP } : { start: blk.start, end: blk.end };
+    const { r } = blk;
+    const j = i - blk.firstPart;
     const np = r.pieces.length;
     const back = r.jumps[np - 1]!;
-    if (j === 0) return { start: lay.cursor, end: r.start };
-    if (j === 1 + (r.repeats - 1) * np) {
+    if (j === (r.repeats - 1) * np) {
       // the final repeat: just the loop, entered by the jump back (or naturally, when the loop plays once)
-      return { start: r.start, end: r.end, jump: r.repeats > 1 ? { fadeMs: back.fadeMs, gain: back.gain, ramp: back.ramp } : undefined };
+      const jump = r.repeats > 1 ? { fadeMs: back.fadeMs, gain: back.gain, ramp: back.ramp } : blk.enter ? PLAIN_JUMP : undefined;
+      return { start: r.start, end: r.end, jump };
     }
-    const c = Math.floor((j - 1) / np);
-    const pi = (j - 1) % np;
-    const via = pi === 0 ? (c === 0 ? undefined : back) : r.jumps[pi - 1]!;
+    const c = Math.floor(j / np);
+    const pi = j % np;
+    const via = pi === 0 ? (c === 0 ? (blk.enter ? PLAIN_JUMP : undefined) : back) : r.jumps[pi - 1]!;
     const piece = r.pieces[pi]!;
     return { start: piece.start, end: piece.end, jump: via && { fadeMs: via.fadeMs, gain: via.gain, ramp: via.ramp } };
   }
 
   startOf(i: number): number {
-    const lay = this.layoutOfPart(i);
-    if (!lay) return this.tailStart;
-    const { r } = lay;
-    const j = i - lay.firstPart;
+    if (this.blocks.length === 0) return 0;
+    const blk = this.blockOfPart(i);
+    if (blk.kind === 'piece') return blk.outStart;
+    const { r } = blk;
+    const j = i - blk.firstPart;
     const np = r.pieces.length;
-    if (j === 0) return lay.outStart;
-    if (j === 1 + (r.repeats - 1) * np) return lay.outStart + lay.preLen + (r.repeats - 1) * lay.cycle;
-    const c = Math.floor((j - 1) / np);
-    return lay.outStart + lay.preLen + c * lay.cycle + lay.pieceOffsets[(j - 1) % np]!;
+    if (j === (r.repeats - 1) * np) return blk.outStart + (r.repeats - 1) * blk.cycle;
+    return blk.outStart + Math.floor(j / np) * blk.cycle + blk.pieceOffsets[j % np]!;
   }
 
   indexAt(pos: number): number {
-    const L = this.layouts;
-    if (L.length === 0 || pos >= this.tailStart) return this.count - 1;
+    const B = this.blocks;
+    if (B.length === 0) return 0;
+    if (pos >= this.naturalTotal) return this.count - 1;
     let lo = 0;
-    let hi = L.length - 1;
+    let hi = B.length - 1;
     while (lo < hi) {
       const mid = (lo + hi + 1) >> 1;
-      if (L[mid]!.outStart <= pos) lo = mid;
+      if (B[mid]!.outStart <= pos) lo = mid;
       else hi = mid - 1;
     }
-    const lay = L[lo]!;
-    if (pos < lay.outStart) return 0;
-    const rel = pos - lay.outStart;
-    if (rel < lay.preLen) return lay.firstPart;
-    const np = lay.r.pieces.length;
-    const cycles = (lay.r.repeats - 1) * lay.cycle;
-    const rel2 = rel - lay.preLen;
-    if (rel2 >= cycles) return lay.firstPart + 1 + (lay.r.repeats - 1) * np;
-    const c = Math.floor(rel2 / lay.cycle);
-    const within = rel2 - c * lay.cycle;
+    const blk = B[lo]!;
+    if (pos < blk.outStart) return 0;
+    if (blk.kind === 'piece') return blk.firstPart;
+    const np = blk.r.pieces.length;
+    const rel = pos - blk.outStart;
+    if (rel >= (blk.r.repeats - 1) * blk.cycle) return blk.firstPart + (blk.r.repeats - 1) * np;
+    const c = Math.floor(rel / blk.cycle);
+    const within = rel - c * blk.cycle;
     let pi = 0;
-    while (pi + 1 < np && lay.pieceOffsets[pi + 1]! <= within) pi++;
-    return lay.firstPart + 1 + c * np + pi;
+    while (pi + 1 < np && blk.pieceOffsets[pi + 1]! <= within) pi++;
+    return blk.firstPart + c * np + pi;
   }
+}
+
+/**
+ * The same parts as `PlanParts` finds, written out as a list (for the in-memory render and for tests): the plain
+ * stretches without the cuts, and every loop's cycles and final repeat, each entered by the right jump.
+ */
+export function planPartList(
+  regions: readonly SampleRegion[],
+  sourceLength: number,
+  extras: PlanExtras = {},
+): { parts: Part[]; leadingCut: boolean; trailingCut: boolean } {
+  const cuts = extras.cuts ?? [];
+  const parts: Part[] = [];
+  let leadingCut = false;
+  let cursor = 0;
+  const addPieces = (from: number, to: number): boolean => {
+    const { pieces, trailing } = cutStretch(from, to, cuts);
+    for (const p of pieces) {
+      if (p.skip !== undefined && parts.length === 0) leadingCut = true;
+      parts.push({ start: p.start, end: p.end, ...(p.skip !== undefined && parts.length > 0 ? { jump: PLAIN_JUMP } : {}) });
+    }
+    return trailing !== undefined;
+  };
+  for (const r of regions) {
+    const skipped = addPieces(cursor, r.start);
+    if (skipped && parts.length === 0) leadingCut = true;
+    const enter = skipped && parts.length > 0;
+    const back = r.jumps[r.jumps.length - 1]!;
+    for (let k = 0; k < r.repeats - 1; k++) {
+      r.pieces.forEach((p, i) => {
+        const via = i === 0 ? (k === 0 ? (enter ? PLAIN_JUMP : undefined) : back) : r.jumps[i - 1]!;
+        parts.push({ start: p.start, end: p.end, jump: via && { fadeMs: via.fadeMs, gain: via.gain, ramp: via.ramp } });
+      });
+    }
+    parts.push({
+      start: r.start,
+      end: r.end,
+      jump: r.repeats > 1 ? { fadeMs: back.fadeMs, gain: back.gain, ramp: back.ramp } : enter ? PLAIN_JUMP : undefined,
+    });
+    cursor = r.end;
+  }
+  const trailingCut = addPieces(cursor, sourceLength);
+  return { parts, leadingCut, trailingCut };
 }
 
 /**
@@ -779,7 +1097,7 @@ export class PlanParts implements PartAccess {
 export class RangeRenderer {
   readonly sampleRate: number;
   readonly channelCount: number;
-  /** Length of the extended song in frames. */
+  /** Length of the extended song in frames: after the cuts, and trimmed by the Ending. */
   readonly total: number;
   private access: PlanParts;
   private fades: FadeCache = new Map();
@@ -792,7 +1110,7 @@ export class RangeRenderer {
     this.sampleRate = buffer.sampleRate;
     this.channelCount = buffer.numberOfChannels;
     const regions = regionsToSamples(buffer, plan, options);
-    this.access = new PlanParts(regions, buffer.length, buffer.sampleRate, options);
+    this.access = new PlanParts(regions, buffer.length, buffer.sampleRate, options, planExtras(buffer, plan, options));
     this.total = this.access.total;
   }
 
@@ -803,6 +1121,12 @@ export class RangeRenderer {
   render(from: number, length: number): Float32Array[] {
     return renderPartsRange(this.buffer, this.access, from, length, this.options, this.fades);
   }
+}
+
+/** Frames in the extended song as it will be rendered: after the cuts and the loops' repeats, and trimmed by the Ending. */
+export function plannedFrames(buffer: AudioBufferLike, plan: Plan, options: RenderOptions = {}): number {
+  const regions = regionsToSamples(buffer, plan, options);
+  return new PlanParts(regions, buffer.length, buffer.sampleRate, options, planExtras(buffer, plan, options)).total;
 }
 
 /** `RangeRenderer` for one range (SPEC-v1.2.md 2.2): frames [outStart, outStart + outLength) of the extended song. */
@@ -829,20 +1153,22 @@ export function renderExtended(
 ): Float32Array[] {
   const length = buffer.length;
   const regions = regionsToSamples(buffer, plan, options);
-  const total = renderedLength(regions, length);
-  if (total > RENDER_CONFIG.maxInMemoryFrames) {
+  const extras = planExtras(buffer, plan, options);
+  const { parts, leadingCut, trailingCut } = planPartList(regions, length, extras);
+  const natural = parts.reduce((sum, p) => sum + (p.end - p.start), 0);
+  if (natural > RENDER_CONFIG.maxInMemoryFrames) {
     throw new Error(
-      `The extended song has ${total.toLocaleString('en-US')} frames, too many to hold in memory at once (the limit is ${RENDER_CONFIG.maxInMemoryFrames.toLocaleString('en-US')}). Render it in pieces with renderRange.`,
+      `The extended song has ${natural.toLocaleString('en-US')} frames, too many to hold in memory at once (the limit is ${RENDER_CONFIG.maxInMemoryFrames.toLocaleString('en-US')}). Render it in pieces with renderRange.`,
     );
   }
-  const parts: Part[] = [];
-  let cursor = 0;
-  for (const r of regions) {
-    parts.push(...regionParts(r, cursor));
-    cursor = r.end;
-  }
-  parts.push({ start: cursor, end: length });
-  const { channels } = stitch(buffer, parts, options);
+  const trimmed = extras.endFrames !== undefined && extras.endFrames < natural;
+  const cutFade = Math.round(CUT_FADE_SECONDS * buffer.sampleRate);
+  const explicit = extras.fadeOutFrames ?? 0;
+  const { channels } = stitch(buffer, parts, options, {
+    endFrames: trimmed ? extras.endFrames : undefined,
+    fadeIn: leadingCut ? cutFade : 0,
+    fadeOut: explicit > 0 ? explicit : trailingCut && !trimmed ? cutFade : 0,
+  });
   options.onProgress?.(1);
   return channels;
 }

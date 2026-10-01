@@ -4,7 +4,8 @@
  */
 import { RENDER_CONFIG } from '../../src/audio/config';
 import type { FadeWindow, Part, RenderOptions } from '../../src/audio/render';
-import { jumpFade, makeMid, regionParts, regionsToSamples, renderedLength } from '../../src/audio/render';
+import { CUT_FADE_SECONDS, PLAIN_JUMP, jumpFade, makeMid, planExtras, regionParts, regionsToSamples, renderedLength } from '../../src/audio/render';
+import type { SampleRegion } from '../../src/audio/render';
 import type { Plan } from '../../src/model';
 import type { AudioBufferLike } from '../../src/audio/types';
 
@@ -74,8 +75,72 @@ export function referenceStitch(buffer: AudioBufferLike, parts: Part[], options:
   return { channels, partStarts };
 }
 
+/**
+ * The full render of a plan with cuts and/or an ending, worked out a different way from `PlanParts`: walk the song from
+ * start to end, laying loops and cuts in source order, and decide that a part is entered by a jump simply because it does
+ * not start where the part before it ended. The start of the song is faded in when the first part does not begin at
+ * sample 0 (a cut took the intro), the end faded out when the last part does not end at the song's end.
+ */
+export function referenceRenderWithCuts(buffer: AudioBufferLike, plan: Plan, options: RenderOptions = {}): Float32Array[] {
+  const length = buffer.length;
+  const sr = buffer.sampleRate;
+  const regions = regionsToSamples(buffer, plan, options);
+  const extras = planExtras(buffer, plan, options);
+  type Item = { kind: 'loop'; start: number; end: number; r: SampleRegion } | { kind: 'cut'; start: number; end: number };
+  const items: Item[] = [
+    ...regions.map((r): Item => ({ kind: 'loop', start: r.start, end: r.end, r })),
+    ...(extras.cuts ?? []).map((c): Item => ({ kind: 'cut', start: c.start, end: c.end })),
+  ].sort((a, b) => a.start - b.start);
+  const parts: Part[] = [];
+  let pos = 0;
+  const lastEnd = (): number | undefined => (parts.length ? parts[parts.length - 1]!.end : undefined);
+  const plain = (start: number, end: number): void => {
+    if (end <= start) return;
+    const prev = lastEnd();
+    parts.push(prev !== undefined && prev !== start ? { start, end, jump: PLAIN_JUMP } : { start, end });
+  };
+  for (const item of items) {
+    if (item.kind === 'cut') {
+      plain(pos, item.start);
+      pos = Math.max(pos, item.end);
+      continue;
+    }
+    plain(pos, item.start);
+    const r = item.r;
+    const prev = lastEnd();
+    const enter = prev !== undefined && prev !== r.start;
+    const back = r.jumps[r.jumps.length - 1]!;
+    for (let k = 0; k < r.repeats - 1; k++) {
+      r.pieces.forEach((p, i) => {
+        const via = i === 0 ? (k === 0 ? (enter ? PLAIN_JUMP : undefined) : back) : r.jumps[i - 1]!;
+        parts.push({ start: p.start, end: p.end, jump: via && { fadeMs: via.fadeMs, gain: via.gain, ramp: via.ramp } });
+      });
+    }
+    parts.push({ start: r.start, end: r.end, jump: r.repeats > 1 ? { fadeMs: back.fadeMs, gain: back.gain, ramp: back.ramp } : enter ? PLAIN_JUMP : undefined });
+    pos = r.end;
+  }
+  plain(pos, length);
+  const natural = parts.reduce((sum, p) => sum + (p.end - p.start), 0);
+  const total = extras.endFrames !== undefined && extras.endFrames < natural ? extras.endFrames : natural;
+  const channels = referenceStitch(buffer, parts, options).channels.map((c) => c.slice(0, total));
+  const cutFade = Math.round(CUT_FADE_SECONDS * sr);
+  const leading = parts.length > 0 && parts[0]!.start !== 0;
+  const trailing = parts.length > 0 && parts[parts.length - 1]!.end !== length;
+  const trimmed = total < natural;
+  const out = Math.min(total, extras.fadeOutFrames && extras.fadeOutFrames > 0 ? extras.fadeOutFrames : trailing && !trimmed ? cutFade : 0);
+  const inn = leading ? Math.min(total, cutFade) : 0;
+  // the fade-out ends at exactly 0 on the last sample, the fade-in starts at exactly 0 on the first
+  const outGain = (i: number, f: number): number => (i >= f - 1 ? 0 : Math.cos((Math.PI / 2) * (i / (f - 1))));
+  for (const c of channels) {
+    for (let q = 0; q < inn; q++) c[q] = c[q]! * outGain(inn - 1 - q, inn);
+    for (let q = total - out; q < total; q++) c[q] = c[q]! * outGain(q - (total - out), out);
+  }
+  return channels;
+}
+
 /** The full render, the way it was done before ranges. */
 export function referenceRenderExtended(buffer: AudioBufferLike, plan: Plan, options: RenderOptions = {}): Float32Array[] {
+  if (plan.cuts?.length || plan.ending) return referenceRenderWithCuts(buffer, plan, options);
   const length = buffer.length;
   const regions = regionsToSamples(buffer, plan, options);
   if (renderedLength(regions, length) > RENDER_CONFIG.maxInMemoryFrames) throw new Error('too long for the reference renderer');

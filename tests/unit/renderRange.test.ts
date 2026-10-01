@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
-import type { LoopRegion, SeamPlan } from '../../src/model';
+import type { Cut, LoopRegion, SeamPlan } from '../../src/model';
 import type { Plan } from '../../src/model';
-import { PlanParts, RangeRenderer, regionParts, regionsToSamples, renderExtended, renderRange } from '../../src/audio/render';
+import { PlanParts, RangeRenderer, planExtras, regionParts, regionsToSamples, renderExtended, renderRange } from '../../src/audio/render';
 import type { Part, RenderOptions } from '../../src/audio/render';
 import type { AudioBufferLike } from '../../src/audio/types';
 import { makeBuffer } from '../../src/audio/types';
@@ -101,7 +101,7 @@ function checkPlan(buffer: AudioBufferLike, plan: Plan, options: RenderOptions, 
   check(total + 100, 10);
   check(-50, 100);
   // ranges around every jump: the seam sample, a little before and after it
-  const access = new PlanParts(regionsToSamples(buffer, plan, options), buffer.length, buffer.sampleRate, options);
+  const access = new PlanParts(regionsToSamples(buffer, plan, options), buffer.length, buffer.sampleRate, options, planExtras(buffer, plan, options));
   const seams: number[] = [];
   for (let i = 1; i < access.count; i++) if (access.part(i).jump) seams.push(access.startOf(i));
   const rand = rng(seed);
@@ -192,6 +192,93 @@ describe('renderRange equals a slice of the full render', () => {
     const plan = { regions: [region('a', 10, 16, 5)] };
     same(renderExtended(song, plan), referenceRenderExtended(song, plan), 'renderExtended');
     same(renderRange(song, plan, 123456, 4321), referenceRenderExtended(song, plan).map((c) => c.subarray(123456, 123456 + 4321)), 'renderRange');
+  });
+});
+
+describe('renderRange equals a slice of the full render with cuts and an ending (SPEC-v1.3.md 2 and 3)', () => {
+  const sr = 8000;
+  const song = makeBuffer([noise(sr * 30, 21), noise(sr * 30, 22)], sr);
+  const cut = (id: string, start: number, end: number): Cut => ({ id, start, end });
+  const smooth: SeamPlan = {
+    forStart: 4,
+    forEnd: 9,
+    smooth: true,
+    shift: 0.2,
+    align: 0.004,
+    loopStart: 4.2,
+    loopEnd: 9.2,
+    jumps: [{ from: 9.204, to: 4.2, fadeMs: 40, levelDb: -2.5, rampSeconds: 0.5 }],
+    before: scores,
+    after: scores,
+    bridge: null,
+  };
+
+  it('a cut in the middle of the plain song', () => {
+    const plan = { regions: [], cuts: [cut('c', 12, 14)] };
+    checkPlan(song, plan, {}, 60, 21);
+    checkPlan(song, plan, { crossfadeMs: 40, snapZeroCrossings: false }, 30, 22);
+    checkPlan(song, plan, { crossfadeMs: 80, snapZeroCrossings: false, adaptiveCrossfade: false }, 30, 23);
+  });
+
+  it('several cuts, one right after another (merged), and tiny pieces between cuts', () => {
+    checkPlan(song, { regions: [], cuts: [cut('a', 5, 6), cut('b', 6, 8), cut('c', 8.01, 9), cut('d', 9.012, 12), cut('e', 15, 15.05)] }, {}, 60, 24);
+  });
+
+  it('a cut at the very start (a fade-in), at the very end (a fade-out), and both', () => {
+    checkPlan(song, { regions: [], cuts: [cut('a', 0, 3)] }, {}, 40, 25);
+    checkPlan(song, { regions: [], cuts: [cut('a', 27, 30)] }, {}, 40, 26);
+    checkPlan(song, { regions: [], cuts: [cut('a', 0, 3), cut('b', 27, 30), cut('c', 14, 15)] }, {}, 60, 27);
+  });
+
+  it('loops with cuts around them: next to a loop edge, between loops, and with a bridge and a seam plan', () => {
+    const bridge = bridged(15, 20, [
+      { from: 22.5, to: 17, fadeMs: 30 },
+      { from: 18.2, to: 15, fadeMs: 55, levelDb: 3, rampSeconds: 0.25 },
+    ]);
+    const plan = {
+      regions: [region('a', 4, 9, 6, smooth), region('b', 15, 20, 5, bridge), region('c', 24, 29.9, 3)],
+      // a leading cut; right after loop a; right before loop b; between b's bridge and c; to the end of the song
+      cuts: [cut('1', 0, 2), cut('2', 9.2, 11), cut('3', 13, 15), cut('4', 23, 23.5), cut('5', 29.9, 30)],
+    };
+    checkPlan(song, plan, {}, 150, 28);
+    checkPlan(song, plan, { crossfadeMs: 5, snapZeroCrossings: false }, 50, 29);
+  });
+
+  it('a cut between two loops that touch it on both sides, and a cut that ends where the first loop starts', () => {
+    checkPlan(song, { regions: [region('a', 10, 15, 3), region('b', 17, 22, 3)], cuts: [cut('c', 15, 17)] }, {}, 80, 30);
+    checkPlan(song, { regions: [region('a', 4, 9, 4)], cuts: [cut('c', 0, 4)] }, {}, 60, 31);
+    checkPlan(song, { regions: [region('a', 0, 3, 2), region('b', 5, 8, 2)], cuts: [cut('c', 3, 5)] }, {}, 60, 32);
+  });
+
+  it('a cut that overlaps a loop is trimmed to the free song around it', () => {
+    checkPlan(song, { regions: [region('a', 10, 15, 3)], cuts: [cut('c', 8, 12), cut('d', 14, 18)] }, {}, 60, 33);
+  });
+
+  it('the ending: End at inside a repeat, with and without a fade, past the end, and a fade on the real ending', () => {
+    const loop = [region('a', 10, 16, 5)];
+    checkPlan(song, { regions: loop, ending: { endAt: 41.5, fadeSeconds: 3 } }, {}, 60, 34);
+    checkPlan(song, { regions: loop, ending: { endAt: 41.5, fadeSeconds: 0 } }, {}, 40, 35);
+    checkPlan(song, { regions: loop, ending: { endAt: 9999, fadeSeconds: 2 } }, {}, 40, 36);
+    checkPlan(song, { regions: loop, ending: { endAt: null, fadeSeconds: 4 } }, {}, 40, 37);
+    // the fade is longer than what is left of the song: it is cut to the song
+    checkPlan(song, { regions: loop, ending: { endAt: 2, fadeSeconds: 5 } }, {}, 30, 38);
+  });
+
+  it('the ending together with cuts and loops (the fade crosses a cut join and a seam)', () => {
+    const plan = {
+      regions: [region('a', 10, 16, 5)],
+      cuts: [cut('c', 3, 5), cut('d', 18, 20), cut('e', 28, 30)],
+      ending: { endAt: 52.25, fadeSeconds: 40 },
+    };
+    checkPlan(song, plan, {}, 80, 39);
+    checkPlan(song, { ...plan, ending: { endAt: null, fadeSeconds: 0 } }, {}, 40, 40);
+  });
+
+  it('is the same as renderExtended, which lists the parts instead of finding them', () => {
+    const plan = { regions: [region('a', 10, 16, 3)], cuts: [cut('c', 0, 2), cut('d', 20, 22), cut('e', 29, 30)], ending: { endAt: 30, fadeSeconds: 1.5 } };
+    const full = renderExtended(song, plan);
+    same(full, referenceRenderExtended(song, plan), 'renderExtended with cuts');
+    same(renderRange(song, plan, 1234, 5678), full.map((c) => c.subarray(1234, 1234 + 5678)), 'renderRange with cuts');
   });
 });
 

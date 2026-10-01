@@ -197,7 +197,7 @@ export async function auditPage(page: Page, what: string): Promise<string[]> {
   return found.map((p) => `${what}: ${p}`);
 }
 
-/** The loaded state of SPEC-v1.3.md 1: a song with two loops (one bridged, one rough with a nearby suggestion). */
+/** The loaded state of SPEC-v1.3.md 1: a song with two loops (one bridged, one rough with a nearby suggestion) and a cut. */
 export async function loadBusyPage(page: Page): Promise<void> {
   const fixture = await makeChordFixture({ progressions: { A: 'C G Am F', B: 'Dm Em F G' }, structure: 'ABABABAB' }, 'demo-chords.wav');
   await page.goto('/');
@@ -214,4 +214,7 @@ export async function loadBusyPage(page: Page): Promise<void> {
   await expect(page.getByTestId('seam-chip').nth(1)).toHaveText('Rough');
   await page.getByTestId('repeats').first().fill('3');
   await page.getByTestId('repeats').first().press('Enter');
+  // one cut
+  await page.evaluate(() => (window as unknown as { songLooper: { addCut(x: { start: number; end: number }): string | null } }).songLooper.addCut({ start: 40, end: 44 }));
+  await expect(page.getByTestId('cut')).toHaveCount(1);
 }

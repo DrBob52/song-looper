@@ -1,6 +1,6 @@
 import type { Segment } from '../audio/render';
-import type { LoopRegion } from '../model';
-import { formatTime } from '../util/time';
+import type { LoopRegion, Span } from '../model';
+import { formatClock, formatTime } from '../util/time';
 import { h } from './dom';
 import { loopCss, loopInkCss } from './loopColors';
 
@@ -15,6 +15,7 @@ export class TimelineStrip {
   readonly el: HTMLElement;
   private bar: HTMLElement;
   private head: HTMLElement;
+  private marks: HTMLElement;
   private total = 0;
 
   constructor(private onSeek: (extendedSeconds: number) => void) {
@@ -45,11 +46,14 @@ export class TimelineStrip {
         },
       },
     });
+    // the scissors of the cuts: one above every join where the extended song skips a cut
+    this.marks = h('div', { class: 'tl-marks', attrs: { hidden: true, 'aria-hidden': 'true' } });
     this.el = h('section', { class: 'card', attrs: { 'aria-label': 'Extended timeline' } }, [
       h('div', { class: 'card-head' }, [
         h('h2', { text: 'Extended timeline' }),
         h('span', { class: 'muted small', text: 'The run-out groove: click to play the extended cut from there' }),
       ]),
+      this.marks,
       h('div', { class: 'tl-wrap' }, [this.bar, this.head]),
     ]);
   }
@@ -63,6 +67,7 @@ export class TimelineStrip {
   update(segments: Segment[], regions: LoopRegion[]): void {
     this.bar.replaceChildren();
     this.total = segments.length ? segments[segments.length - 1]!.outEnd : 0;
+    this.updateMarks(segments);
     if (this.total <= 0) return;
     const byId = new Map(regions.map((r, i) => [r.id, { region: r, index: i }]));
     if (segments.length > MAX_BLOCKS) {
@@ -90,6 +95,37 @@ export class TimelineStrip {
         block.title = `Original ${formatTime(seg.start, 1)} – ${formatTime(seg.end, 1)}`;
       }
       this.bar.append(block);
+    }
+  }
+
+  /** A ✂ above each join where a cut is skipped (the start of the song and its end included); close joins share one. */
+  private updateMarks(segments: Segment[]): void {
+    this.marks.replaceChildren();
+    const joins: { at: number; cuts: Span[] }[] = [];
+    for (const seg of segments) {
+      if (seg.skipBefore) joins.push({ at: seg.outStart, cuts: [seg.skipBefore] });
+      if (seg.skipAfter) joins.push({ at: seg.outEnd, cuts: [seg.skipAfter] });
+    }
+    const groups: { at: number; cuts: Span[] }[] = [];
+    for (const j of joins) {
+      const last = groups[groups.length - 1];
+      if (last && this.total > 0 && ((j.at - last.at) / this.total) * 100 < 3.5) last.cuts.push(...j.cuts);
+      else groups.push({ at: j.at, cuts: [...j.cuts] });
+    }
+    this.marks.hidden = groups.length === 0;
+    for (const g of groups) {
+      const f = this.total > 0 ? g.at / this.total : 0;
+      const where = g.at <= 1e-9 ? 'at the start' : g.at >= this.total - 1e-9 ? 'at the end' : `at ${formatTime(g.at, 1)}`;
+      const mark = h('span', {
+        class: `tl-cut${f < 0.02 ? ' at-start' : f > 0.98 ? ' at-end' : ''}`,
+        text: '\u2702',
+        style: { left: `${f * 100}%` },
+        attrs: {
+          'data-testid': 'cut-mark',
+          title: `${g.cuts.length > 1 ? 'Cuts' : 'Cut'} skipped ${where}: ${g.cuts.map((c) => `${formatClock(c.start)}\u2013${formatClock(c.end)}`).join(', ')}`,
+        },
+      });
+      this.marks.append(mark);
     }
   }
 

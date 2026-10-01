@@ -3,27 +3,21 @@ import type { LoopRegion } from '../model';
 import { MAX_REPEATS } from '../model';
 import { currentSeam } from '../audio/path';
 import { isSmooth } from '../plan';
-import { formatClock, formatTime, parseClock, roundMs } from '../util/time';
+import { formatTime, roundMs } from '../util/time';
 import { h } from './dom';
+import { createEdgeEditor } from './edgeEditor';
+import type { Edge, EdgeEdit } from './edgeEditor';
 import { holdRepeat } from './holdRepeat';
 import { loopCss, loopInkCss } from './loopColors';
 import { NumberField, parsePlainNumber } from './numberField';
 import { chipLabel, chipTitle, seamSummary } from './seamText';
 
-/** One way of moving a loop's start or end to an exact time. */
-export type EdgeEdit =
-  | { type: 'time'; seconds: number }
-  /** Add `delta` seconds (a nudge). */
-  | { type: 'ms'; delta: number }
-  /** One analysed beat earlier or later. */
-  | { type: 'beat'; dir: 1 | -1 }
-  /** The current playback position of the original song. */
-  | { type: 'playhead' };
-
-export type Edge = 'start' | 'end';
+export type { Edge, EdgeEdit } from './edgeEditor';
 
 export interface RegionsPanelCallbacks {
   onAdd(): void;
+  /** Cut the selection out of the extended song (X): a cut, see SPEC-v1.3.md 2. */
+  onCutSelection(): void;
   onSelect(id: string): void;
   onRepeats(id: string, repeats: number): void;
   /**
@@ -103,6 +97,7 @@ export class RegionsPanel {
   private list: HTMLUListElement;
   private empty: HTMLElement;
   private addBtn: HTMLButtonElement;
+  private cutBtn: HTMLButtonElement;
   private rows = new Map<string, Row>();
 
   constructor(private cb: RegionsPanelCallbacks) {
@@ -112,6 +107,16 @@ export class RegionsPanel {
       attrs: { type: 'button', 'data-testid': 'add-loop', title: 'Add a loop at the selection (L)' },
       on: { click: () => this.cb.onAdd() },
     });
+    this.cutBtn = h('button', {
+      class: 'btn sm',
+      text: '\u2702 Cut selection',
+      attrs: {
+        type: 'button',
+        'data-testid': 'cut-selection',
+        title: 'Cut the selection out of the extended song (X). With no selection, a short cut opens at the playhead.',
+      },
+      on: { click: () => this.cb.onCutSelection() },
+    });
     this.empty = h('p', {
       class: 'muted small',
       text: 'No loops yet. Drag on the waveform to select a span, then press L or use Add loop.',
@@ -119,7 +124,7 @@ export class RegionsPanel {
     });
     this.list = h('ul', { class: 'region-list', attrs: { 'data-testid': 'regions' } });
     this.el = h('section', { class: 'card', attrs: { 'aria-label': 'Loop regions' } }, [
-      h('div', { class: 'card-head' }, [h('h2', { text: 'Your loops' }), this.addBtn]),
+      h('div', { class: 'card-head' }, [h('h2', { text: 'Your loops' }), h('div', { class: 'card-actions' }, [this.cutBtn, this.addBtn])]),
       this.empty,
       this.list,
     ]);
@@ -127,6 +132,7 @@ export class RegionsPanel {
 
   setEnabled(enabled: boolean): void {
     this.addBtn.disabled = !enabled;
+    this.cutBtn.disabled = !enabled;
   }
 
   update(regions: LoopRegion[], selectedId: string | null, info: RegionsPanelInfo): void {
@@ -226,66 +232,24 @@ export class RegionsPanel {
       attrs: { hidden: true, 'data-testid': 'loop-exact-notice', role: 'status' },
     });
     const beatButtons: HTMLButtonElement[] = [];
-    const edge = (which: Edge, label: string): { el: HTMLElement; field: NumberField } => {
-      const field: NumberField = new NumberField({
-        id: `loop-${id}-${which}`,
-        label: `${label} time of this loop`,
-        testId: `loop-${which}`,
-        value: 0,
-        format: (v) => formatClock(v),
-        parse: (text) => {
-          const v = parseClock(text);
-          return v === null ? 'Enter a time like 1:09.600, 1:09 or 69.6.' : roundMs(v);
+    const edge = (which: Edge): { el: HTMLElement; field: NumberField } =>
+      createEdgeEditor({
+        noun: 'loop',
+        which,
+        fieldId: `loop-${id}-${which}`,
+        testIds: {
+          field: `loop-${which}`,
+          beatDec: `${which}-beat-dec`,
+          msDec: `${which}-ms-dec`,
+          msInc: `${which}-ms-inc`,
+          beatInc: `${which}-beat-inc`,
+          playhead: `${which}-playhead`,
         },
-        step: 0.01,
-        width: 10,
-        inputMode: 'text',
-        onCommit: (seconds) => this.cb.onEditEdge(id, which, { type: 'time', seconds }),
+        onEdit: (edit) => this.cb.onEditEdge(id, which, edit),
+        beatButtons,
       });
-      const apply = (edit: EdgeEdit): void => {
-        const refused = this.cb.onEditEdge(id, which, edit);
-        if (refused) field.showError(refused);
-      };
-      const btn = (text: string, aria: string, testId: string, edit: EdgeEdit, beat = false): HTMLButtonElement => {
-        const b = h('button', {
-          class: 'btn sm nudge',
-          text,
-          attrs: { type: 'button', 'aria-label': aria, title: aria, 'data-testid': testId },
-          on: {
-            click: (e) => {
-              e.stopPropagation();
-              apply(edit);
-            },
-          },
-        });
-        if (beat) beatButtons.push(b);
-        return b;
-      };
-      const el = h('div', { class: 'edge', attrs: { role: 'group', 'aria-label': `${label} of the loop` } }, [
-        h('label', { class: 'edge-label muted small', text: label, attrs: { for: `loop-${id}-${which}` } }),
-        field.el,
-        h('span', { class: 'nudges' }, [
-          btn('\u2212beat', `${label} one beat earlier`, `${which}-beat-dec`, { type: 'beat', dir: -1 }, true),
-          btn('\u221210 ms', `${label} 10 milliseconds earlier`, `${which}-ms-dec`, { type: 'ms', delta: -0.01 }),
-          btn('+10 ms', `${label} 10 milliseconds later`, `${which}-ms-inc`, { type: 'ms', delta: 0.01 }),
-          btn('+beat', `${label} one beat later`, `${which}-beat-inc`, { type: 'beat', dir: 1 }, true),
-        ]),
-        h('button', {
-          class: 'btn sm',
-          text: 'Set from playhead',
-          attrs: { type: 'button', 'data-testid': `${which}-playhead`, title: `Use the playhead as the ${which} (${which === 'start' ? 'I' : 'O'})` },
-          on: {
-            click: (e) => {
-              e.stopPropagation();
-              apply({ type: 'playhead' });
-            },
-          },
-        }),
-      ]);
-      return { el, field };
-    };
-    const startEdge = edge('start', 'Start');
-    const endEdge = edge('end', 'End');
+    const startEdge = edge('start');
+    const endEdge = edge('end');
     const repeats: NumberField = new NumberField({
       id: `loop-${id}-repeats`,
       label: 'Repeat count',

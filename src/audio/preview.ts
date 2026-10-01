@@ -1,7 +1,7 @@
-import type { LoopRegion } from '../model';
+import type { LoopRegion, Span } from '../model';
 import { RENDER_CONFIG } from './config';
 import type { Part, RenderOptions, SampleRegion } from './render';
-import { regionsToSamples, stitch } from './render';
+import { CUT_FADE_SECONDS, PLAIN_JUMP, planExtras, regionsToSamples, stitch } from './render';
 import type { AudioBufferLike } from './types';
 
 /** What a loop needs to be auditioned: its points, and optionally the seam plan (and bridge) it plays with. */
@@ -103,4 +103,45 @@ export function renderLoopBody(buffer: AudioBufferLike, region: PreviewRegion, o
   const n = r.pieces.length;
   const map = r.pieces.map((p, i) => ({ out: partStarts[n + i]! - period, src: p.start }));
   return { channels, sampleRate: sr, originalStart: r.start / sr, map };
+}
+
+/**
+ * Cut audition (SPEC-v1.3.md 2.2): the `seconds` before the cut's start, the join, and the `seconds` after its end,
+ * through the same zero-crossing snap and plain crossfade as the extended song has at that join. A cut that removes the
+ * intro has no join: the song starts at its end, with the short fade-in. One that runs to the end plays up to its start,
+ * with the short fade-out.
+ */
+export function renderCutSnippet(
+  buffer: AudioBufferLike,
+  cut: Span,
+  options: RenderOptions = {},
+  seconds: number = RENDER_CONFIG.seamAuditionSeconds,
+): Snippet {
+  const sr = buffer.sampleRate;
+  const length = buffer.length;
+  const c = planExtras(buffer, { regions: [], cuts: [{ id: 'cut', start: cut.start, end: cut.end }] }, options).cuts?.[0];
+  if (!c) throw new Error('That cut is empty.');
+  const span = Math.round(seconds * sr);
+  const fade = Math.round(CUT_FADE_SECONDS * sr);
+  let parts: Part[];
+  const envelope: { fadeIn?: number; fadeOut?: number } = {};
+  if (c.start <= 0) {
+    parts = [{ start: c.end, end: Math.min(length, c.end + span) }];
+    envelope.fadeIn = fade;
+  } else if (c.end >= length) {
+    parts = [{ start: Math.max(0, c.start - span), end: c.start }];
+    envelope.fadeOut = fade;
+  } else {
+    parts = [
+      { start: Math.max(0, c.start - span), end: c.start },
+      { start: c.end, end: Math.min(length, c.end + span), jump: PLAIN_JUMP },
+    ];
+  }
+  const { channels, partStarts } = stitch(buffer, parts, options, envelope);
+  return {
+    channels,
+    sampleRate: sr,
+    seamIndex: parts.length > 1 ? partStarts[1]! : 0,
+    map: parts.map((p, i) => ({ out: partStarts[i]!, src: p.start })),
+  };
 }
