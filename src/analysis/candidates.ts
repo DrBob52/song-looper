@@ -1,9 +1,15 @@
 import { ANALYSIS_CONFIG } from './config';
 import type { BeatFeatures } from './features';
+import { loopHarmony } from './harmony';
+import type { HarmonyModel } from './harmony';
 import type { SelfSimilarity } from './ssm';
-import type { LoopCandidate, Section } from './types';
+import type { CandidateComponents, LoopCandidate, Section } from './types';
 
-type CandidateConfig = typeof ANALYSIS_CONFIG.candidates;
+/** Widen the `as const` literals of the config so callers (and tests) can pass other numbers. */
+type Widen<T> = {
+  -readonly [K in keyof T]: T[K] extends number ? number : T[K] extends readonly number[] ? readonly number[] : T[K] extends object ? Widen<T[K]> : T[K];
+};
+type CandidateConfig = Widen<typeof ANALYSIS_CONFIG.candidates>;
 
 export interface CandidateInput {
   ssm: SelfSimilarity;
@@ -16,6 +22,8 @@ export interface CandidateInput {
   /** Beat indices that start a section. */
   boundaries: number[];
   duration: number;
+  /** Harmonic transition model. Without one the seam score is the context match alone. */
+  harmony?: HarmonyModel | null;
   cfg?: CandidateConfig;
 }
 
@@ -35,6 +43,35 @@ export function seamScore(ssm: SelfSimilarity, a: number, b: number, seamBeats: 
   // Missing context (a loop at the very start of the song) counts against the seam a little.
   const coverage = count / (2 * seamBeats);
   return Math.max(0, Math.min(1, (sum / count) * (0.5 + 0.5 * coverage)));
+}
+
+/** Mean of S[ia][ib] over the pairs `pairs(j)` that lie inside the matrix, with a small penalty for missing context. */
+function diagonalMean(ssm: SelfSimilarity, beats: number, pairs: (j: number) => [number, number]): number {
+  const { S, n } = ssm;
+  let sum = 0;
+  let count = 0;
+  for (let j = 0; j < beats; j++) {
+    const [ia, ib] = pairs(j);
+    if (ia < 0 || ib < 0 || ia >= n || ib >= n) continue;
+    sum += S[ia * n + ib]!;
+    count++;
+  }
+  if (count === 0) return 0;
+  return Math.max(0, Math.min(1, (sum / count) * (0.5 + 0.5 * (count / beats))));
+}
+
+/**
+ * SPEC-seams.md 6. How well the music around a matches the music around b, on either side:
+ *
+ *   max( mean S[a-1-j][b-1-j]  (the lead-ins match),  mean S[a+j][b+j]  (the continuations match) )  for j in 0..3
+ *
+ * The old seam score demanded both sides. That penalised looping one whole section (a chorus that is followed
+ * by a verse) even when the chord change back to the start occurs elsewhere in the song.
+ */
+export function contextMatch(ssm: SelfSimilarity, a: number, b: number, beats: number = ANALYSIS_CONFIG.candidates.contextBeats): number {
+  const lead = diagonalMean(ssm, beats, (j) => [a - 1 - j, b - 1 - j]);
+  const cont = diagonalMean(ssm, beats, (j) => [a + j, b + j]);
+  return Math.max(lead, cont);
 }
 
 export function structureScore(
@@ -92,6 +129,11 @@ function describe(
   boundaries: ReadonlySet<number>,
 ): string {
   const parts = [`Seam match ${Math.round(c.components.seam * 100)}%`];
+  const h = c.components.harmony;
+  if (h !== undefined) {
+    if (h >= ANALYSIS_CONFIG.harmony.good) parts.push('chords lead back cleanly');
+    else if (h < ANALYSIS_CONFIG.harmony.poor) parts.push("chord change at the seam isn't in the song");
+  }
   const hasA = boundaries.has(c.startBeat);
   const hasB = boundaries.has(c.endBeat);
   const labels = sections.map((s) => s.label);
@@ -112,6 +154,36 @@ function describe(
   return parts.join(', ');
 }
 
+export interface LoopScoreContext {
+  ssm: SelfSimilarity;
+  features: Pick<BeatFeatures, 'loudness'>;
+  boundaries: ReadonlySet<number>;
+  harmony?: HarmonyModel | null;
+  cfg?: CandidateConfig;
+}
+
+export interface LoopScore {
+  score: number;
+  components: CandidateComponents;
+}
+
+/** The candidate score of the beat range [a, b) (a < b, whole bars or not): seam, structure, energy, length. */
+export function scoreLoop(ctx: LoopScoreContext, a: number, b: number, beatsPerBar: number): LoopScore {
+  const cfg = ctx.cfg ?? ANALYSIS_CONFIG.candidates;
+  const w = cfg.weights;
+  const context = contextMatch(ctx.ssm, a, b, cfg.contextBeats);
+  const harmony = ctx.harmony ? loopHarmony(ctx.harmony, a, b) : undefined;
+  const seam =
+    harmony === undefined ? context : cfg.seamContextWeight * context + cfg.seamHarmonyWeight * harmony;
+  const structure = structureScore(a, b, ctx.boundaries, cfg);
+  const energy = energyContinuity(ctx.features.loudness, a, b, cfg.energyDbRange);
+  const length = lengthPreference(Math.round((b - a) / beatsPerBar), cfg);
+  const score = w.seam * seam + w.structure * structure + w.energy * energy + w.length * length;
+  const components: CandidateComponents = { seam, structure, energy, length, contextMatch: context };
+  if (harmony !== undefined) components.harmony = harmony;
+  return { score, components };
+}
+
 /**
  * Score every bar-aligned (a, b) pair (2 to 32 bars, at least 4 s, at most half the song) and return the
  * best non-overlapping ones, best first.
@@ -120,7 +192,7 @@ export function findCandidates(input: CandidateInput): LoopCandidate[] {
   const cfg = input.cfg ?? ANALYSIS_CONFIG.candidates;
   const { ssm, features, beats, barBeats, beatsPerBar, sections, duration } = input;
   const boundaries = new Set(input.boundaries);
-  const w = cfg.weights;
+  const ctx: LoopScoreContext = { ssm, features, boundaries, harmony: input.harmony, cfg };
   const all: LoopCandidate[] = [];
 
   for (let ia = 0; ia < barBeats.length; ia++) {
@@ -131,12 +203,7 @@ export function findCandidates(input: CandidateInput): LoopCandidate[] {
       const seconds = beats[b]! - beats[a]!;
       if (seconds > cfg.maxSongFraction * duration) break;
       if (seconds < cfg.minSeconds) continue;
-      const seam = seamScore(ssm, a, b, cfg.seamBeats);
-      const structure = structureScore(a, b, boundaries, cfg);
-      const energy = energyContinuity(features.loudness, a, b, cfg.energyDbRange);
-      const length = lengthPreference(bars, cfg);
-      const score = w.seam * seam + w.structure * structure + w.energy * energy + w.length * length;
-      const components = { seam, structure, energy, length };
+      const { score, components } = scoreLoop(ctx, a, b, beatsPerBar);
       all.push({
         start: beats[a]!,
         end: beats[b]!,

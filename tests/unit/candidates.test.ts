@@ -1,17 +1,23 @@
 import { describe, expect, it } from 'vitest';
 import {
+  contextMatch,
   countRuns,
   energyContinuity,
   findCandidates,
   lengthPreference,
+  scoreLoop,
   seamScore,
   starsFor,
   structureScore,
 } from '../../src/analysis/candidates';
+import { ANALYSIS_CONFIG } from '../../src/analysis/config';
+import type { HarmonyModel } from '../../src/analysis/harmony';
 import { analyzeSignal } from '../../src/analysis/pipeline';
-import type { Analysis } from '../../src/analysis/types';
-import { synthSong } from '../fixtures/synth';
+import type { Analysis, Section } from '../../src/analysis/types';
+import { SONG1, SONG2, synthSong } from '../fixtures/synth';
 import type { SynthSong } from '../fixtures/synth';
+import { analyseChordSong } from './chordHelpers';
+import type { AnalysedChordSong } from './chordHelpers';
 import { makeSsm } from './ssmHelpers';
 
 const SR = 22050;
@@ -219,6 +225,137 @@ describe('candidate components', () => {
     for (let i = 0; i < out.length; i++) for (let j = i + 1; j < out.length; j++) expect(iou(out[i]!, out[j]!)).toBeLessThanOrEqual(0.6);
     expect(out.length).toBeLessThanOrEqual(12);
     expect(out.length).toBeGreaterThan(2);
+  });
+});
+
+describe('context match (SPEC-seams.md 6)', () => {
+  // 40 beats. Beats 0..19 and 20..39 are the same music, so a jump from b = 30 to a = 10 matches on both sides.
+  const n = 40;
+  const S = new Float32Array(n * n).fill(0.1);
+  for (let i = 0; i < n; i++) S[i * n + i] = 1;
+  const set = (i: number, j: number, v: number): void => {
+    S[i * n + j] = v;
+    S[j * n + i] = v;
+  };
+
+  it('takes the better of the lead-in and the continuation, not both', () => {
+    // continuation only: S[a + j][b + j] high, lead-in low
+    for (let j = 0; j < 4; j++) set(10 + j, 30 + j, 0.9);
+    expect(contextMatch({ S, n }, 10, 30, 4)).toBeCloseTo(0.9, 5);
+    // lead-in only: S[a - 1 - j][b - 1 - j] high
+    const S2 = new Float32Array(n * n).fill(0.1);
+    for (let i = 0; i < n; i++) S2[i * n + i] = 1;
+    for (let j = 0; j < 4; j++) S2[(10 - 1 - j) * n + (30 - 1 - j)] = 0.8;
+    expect(contextMatch({ S: S2, n }, 10, 30, 4)).toBeCloseTo(0.8, 5);
+    // neither
+    expect(contextMatch({ S: new Float32Array(n * n).fill(0.1), n }, 10, 30, 4)).toBeCloseTo(0.1, 5);
+  });
+
+  it('a missing side (loop at the start of the song) leaves the other side to decide', () => {
+    const S3 = new Float32Array(n * n).fill(0.1);
+    for (let j = 0; j < 4; j++) S3[(0 + j) * n + (20 + j)] = 1;
+    expect(contextMatch({ S: S3, n }, 0, 20, 4)).toBeCloseTo(1, 5);
+  });
+
+  it('seam = 0.5 * context + 0.5 * harmony, and the context alone without a harmony model', () => {
+    const ssm = { S, n };
+    const features = { loudness: new Float32Array(n).fill(-20) };
+    const boundaries = new Set<number>();
+    const noHarmony = scoreLoop({ ssm, features, boundaries }, 10, 30, 4);
+    expect(noHarmony.components.seam).toBeCloseTo(noHarmony.components.contextMatch, 9);
+    expect(noHarmony.components.harmony).toBeUndefined();
+    const fake = { isStatic: true } as unknown as HarmonyModel; // static: harmony 1
+    const withHarmony = scoreLoop({ ssm, features, boundaries, harmony: fake }, 10, 30, 4);
+    expect(withHarmony.components.harmony).toBe(1);
+    expect(withHarmony.components.seam).toBeCloseTo(
+      ANALYSIS_CONFIG.candidates.seamContextWeight * withHarmony.components.contextMatch +
+        ANALYSIS_CONFIG.candidates.seamHarmonyWeight,
+      9,
+    );
+  });
+});
+
+describe('suggestions use the harmonic transition model (SPEC-seams.md 6 and 7)', () => {
+  /** Candidates for a chord song scored against its true sections (the section detector cannot place the A|B edge here). */
+  function rankWithTrueSections(a: AnalysedChordSong): { starts: number[]; list: ReturnType<typeof findCandidates> } {
+    const { song, session, analysis } = a;
+    const boundaries = song.sections.map((x) => a.beat(x.start));
+    const sections: Section[] = song.sections.map((x, i) => ({
+      start: x.start,
+      end: x.end,
+      label: x.label,
+      startBeat: boundaries[i]!,
+      endBeat: boundaries[i + 1] ?? analysis.beats.length,
+    }));
+    const list = findCandidates({
+      ssm: session.similarity!,
+      features: session.beatFeatures!,
+      beats: analysis.beats,
+      barBeats: session.barBeats(),
+      beatsPerBar: 4,
+      sections,
+      boundaries,
+      duration: analysis.duration,
+      harmony: session.harmony,
+    });
+    const starts = song.sections.filter((x) => x.label === 'A').map((x) => x.start);
+    return { starts, list };
+  }
+  const isLoopA = (a: AnalysedChordSong, c: { start: number; end: number }): boolean =>
+    a.song.sections.some((x) => x.label === 'A' && Math.abs(c.start - x.start) < 0.1 && Math.abs(c.end - x.end) < 0.1);
+
+  it('song 2: loop A alone appears in the top 5', () => {
+    const song2 = analyseChordSong(SONG2);
+    const { list } = rankWithTrueSections(song2);
+    const rank = list.findIndex((c) => isLoopA(song2, c));
+    expect(rank).toBeGreaterThanOrEqual(0);
+    expect(rank).toBeLessThan(5);
+    expect(list[rank]!.components.harmony).toBeGreaterThan(0.7);
+    expect(list[rank]!.reason).toContain('chords lead back cleanly');
+  });
+
+  it('song 1: loop A alone does not (its chord change back to C is not in the song)', () => {
+    const song1 = analyseChordSong(SONG1);
+    const { list } = rankWithTrueSections(song1);
+    const rank = list.findIndex((c) => isLoopA(song1, c));
+    expect(rank === -1 || rank >= 5).toBe(true);
+    // wherever it is scored, its harmony is low and the reason says so
+    const all = findCandidates({
+      ssm: song1.session.similarity!,
+      features: song1.session.beatFeatures!,
+      beats: song1.analysis.beats,
+      barBeats: song1.session.barBeats(),
+      beatsPerBar: 4,
+      sections: [],
+      boundaries: [],
+      duration: song1.analysis.duration,
+      harmony: song1.session.harmony,
+      cfg: { ...ANALYSIS_CONFIG.candidates, maxCandidates: 1000, nmsOverlap: 2 },
+    });
+    const a = all.find((c) => c.startBeat === song1.beat(0) && c.bars === 4)!;
+    expect(a.components.harmony).toBeLessThan(0.35);
+    expect(a.reason).toContain("chord change at the seam isn't in the song");
+  });
+
+  it('whole sections whose chord change is in the song beat the same loops when it is not', () => {
+    const song1 = analyseChordSong(SONG1);
+    const song2 = analyseChordSong(SONG2);
+    const score = (a: AnalysedChordSong, section: number): number => {
+      const [from, to] = a.span(section);
+      return scoreLoop(
+        {
+          ssm: a.session.similarity!,
+          features: a.session.beatFeatures!,
+          boundaries: new Set(a.song.sections.map((x) => a.beat(x.start))),
+          harmony: a.session.harmony,
+        },
+        from,
+        to,
+        4,
+      ).score;
+    };
+    // song 1: A is section 0; song 2 (C A B A B): A is section 1
+    expect(score(song2, 1)).toBeGreaterThan(score(song1, 0) + 0.1);
   });
 });
 

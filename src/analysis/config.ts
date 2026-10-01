@@ -116,6 +116,32 @@ export const ANALYSIS_CONFIG = {
     minSectionBars: 2,
   },
 
+  /** SPEC-seams.md 2: harmonic transition model built from the song's own chord changes. */
+  harmony: {
+    /** `w`: beats on each side of a seam that must match somewhere in the song. */
+    windowBeats: 2,
+    /** The evidence is the mean of this many best matches that are at least one bar apart. */
+    topMatches: 2,
+    /**
+     * A best match needs a second one, a bar or more away, to back it up (the mean of the top two). That is
+     * waived as the best match approaches an exact repeat: at `exactMatch` and above (both windows at least this
+     * similar) it stands alone, below `corroborateBelow` it is the plain mean of the top two, and in between the
+     * second match's share fades linearly. Without this, a chord change that the song plays exactly once (the
+     * seam from the end of B back into A in A B A B) scores as if it were half a coincidence.
+     */
+    exactMatch: 0.98,
+    corroborateBelow: 0.9,
+    /** Random beat pairs used to normalise the evidence per song (median and 95th percentile). */
+    sampleCount: 2000,
+    /** Seed of the sampler, so a song always gets the same numbers. */
+    sampleSeed: 20240607,
+    /** A song whose p95 - p50 is below this is harmonically static: every seam scores 1. */
+    minSpread: 0.02,
+    /** Harmony at or above this reads "chords lead back cleanly"; below `poor`, "chord change isn't in the song". */
+    good: 0.7,
+    poor: 0.35,
+  },
+
   /** 4.9 Loop candidates */
   candidates: {
     minBars: 2,
@@ -124,6 +150,11 @@ export const ANALYSIS_CONFIG = {
     maxSongFraction: 0.5,
     /** Seam score window: compare S[a + j][b + j] for j in [-seamBeats, +seamBeats). */
     seamBeats: 4,
+    /** SPEC-seams.md 6: context match looks at this many beats before / after the seam. */
+    contextBeats: 4,
+    /** SPEC-seams.md 6: seam = contextWeight * contextMatch + harmonyWeight * harmony. */
+    seamContextWeight: 0.5,
+    seamHarmonyWeight: 0.5,
     weights: { seam: 0.5, structure: 0.25, energy: 0.15, length: 0.1 },
     /** Structure score: bonus for a region that is exactly whole segments. */
     wholeSegmentBonus: 0.2,

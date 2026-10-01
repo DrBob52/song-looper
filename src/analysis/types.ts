@@ -9,10 +9,15 @@ export interface Section {
 }
 
 export interface CandidateComponents {
+  /** 0.5 * contextMatch + 0.5 * harmony (SPEC-seams.md 6); the context match alone when there is no harmony model. */
   seam: number;
   structure: number;
   energy: number;
   length: number;
+  /** How well the music before / after the two edges matches (the better of the two sides). */
+  contextMatch: number;
+  /** Does the song itself make this chord change? 0 (never) to 1 (yes). */
+  harmony?: number;
 }
 
 export interface LoopCandidate {

@@ -34,7 +34,7 @@ export function clickTrack(
 
 const midiToHz = (m: number): number => 440 * Math.pow(2, (m - 69) / 12);
 
-type Timbre = 'saw' | 'sine' | 'square';
+export type Timbre = 'saw' | 'sine' | 'square';
 
 interface SectionDef {
   timbre: Timbre;
@@ -222,3 +222,125 @@ export function sine(hz: number, seconds: number, sampleRate: number, amp = 0.5)
   for (let i = 0; i < n; i++) out[i] = amp * Math.sin((2 * Math.PI * hz * i) / sampleRate);
   return out;
 }
+
+// ---------------------------------------------------------------------------
+// Songs built from named chord progressions (for the harmony model tests)
+// ---------------------------------------------------------------------------
+
+const PITCH_CLASS: Record<string, number> = {
+  C: 0, 'C#': 1, Db: 1, D: 2, 'D#': 3, Eb: 3, E: 4, F: 5, 'F#': 6, Gb: 6, G: 7, 'G#': 8, Ab: 8, A: 9, 'A#': 10, Bb: 10, B: 11,
+};
+
+/** A chord name such as "C", "Am", "F#m" or "Bb": its root pitch class and a close-position triad around G3..G4. */
+export function parseChord(name: string): { name: string; root: number; notes: number[] } {
+  const m = /^([A-G][#b]?)(m?)$/.exec(name);
+  if (!m) throw new Error(`unknown chord ${name}`);
+  const root = PITCH_CLASS[m[1]!]!;
+  const low = 55 + (((root - 55) % 12) + 12) % 12;
+  return { name, root, notes: [low, low + (m[2] ? 3 : 4), low + 7] };
+}
+
+export interface ChordSongOptions {
+  /** Named progressions, one chord per bar, e.g. { A: 'C G Am F', B: 'Dm Em F G' }. */
+  progressions: Record<string, string>;
+  /** Order of the sections, e.g. "ABAB". */
+  structure: string;
+  bpm?: number;
+  sampleRate?: number;
+  beatsPerBar?: number;
+  /** Silence before the first downbeat, in seconds. */
+  leadIn?: number;
+  /** Timbre of the chord tones: one for the whole song, or per section letter (default 'saw'). */
+  timbre?: Timbre | Record<string, Timbre>;
+  /** Off-beat hi-hats: for the whole song, or per section letter (default none: the point of these songs is the chords). */
+  hats?: boolean | Record<string, boolean>;
+  /** Amplitude of the root-note bass (a sine, two octaves below the chord). */
+  bassAmp?: number;
+  /** How long the bass rings from each downbeat, in beats (default 1.5, as in synthSong; beatsPerBar = the whole bar). */
+  bassBeats?: number;
+  kickAmp?: number;
+}
+
+export interface ChordSong extends SynthSong {
+  /** The chord name played in each bar, in order. */
+  chords: string[];
+}
+
+/**
+ * A song made of named chord progressions: one chord per bar (chord tones plus a bass root that rings through
+ * the bar) over a kick on every beat. The same chord always sounds the same, so only the order of the chords
+ * tells the sections apart. Every section has `bars = progression length`.
+ */
+export function chordSong(options: ChordSongOptions): ChordSong {
+  const sampleRate = options.sampleRate ?? 22050;
+  const bpm = options.bpm ?? 120;
+  const beatsPerBar = options.beatsPerBar ?? 4;
+  const leadIn = options.leadIn ?? 0;
+  const timbreOf = (label: string): Timbre =>
+    typeof options.timbre === 'string' ? options.timbre : (options.timbre?.[label] ?? 'saw');
+  const bassAmp = options.bassAmp ?? 0.2;
+  const bassBeats = options.bassBeats ?? 1.5;
+  const kickAmp = options.kickAmp ?? 0.6;
+  const progressions: Record<string, string[]> = {};
+  for (const [k, v] of Object.entries(options.progressions)) progressions[k] = v.trim().split(/\s+/);
+
+  const beat = 60 / bpm;
+  const bar = beat * beatsPerBar;
+  const bars: { label: string; chord: string; start: number }[] = [];
+  const sections: SynthSong['sections'] = [];
+  let t = leadIn;
+  for (const label of options.structure) {
+    const prog = progressions[label];
+    if (!prog) throw new Error(`unknown section ${label}`);
+    sections.push({ label, start: t, end: t + prog.length * bar });
+    for (const chord of prog) {
+      bars.push({ label, chord, start: t });
+      t += bar;
+    }
+  }
+  const duration = t + 0.5;
+  const out = new Float32Array(Math.round(duration * sampleRate));
+  const beatTimes: number[] = [];
+  const barTimes: number[] = [];
+  const barLen = Math.round(bar * sampleRate);
+  for (const b of bars) {
+    const { notes, root } = parseChord(b.chord);
+    const s0 = Math.round(b.start * sampleRate);
+    barTimes.push(b.start);
+    for (const note of notes) addHarmonics(out, s0, barLen, midiToHz(note), timbreOf(b.label), 0.1, sampleRate);
+    addHarmonics(out, s0, Math.round(bassBeats * beat * sampleRate), midiToHz(root + 36), 'sine', bassAmp, sampleRate);
+    for (let k = 0; k < beatsPerBar; k++) {
+      const bt = b.start + k * beat;
+      beatTimes.push(bt);
+      addKick(out, Math.round(bt * sampleRate), k === 0 ? kickAmp * 1.2 : kickAmp, sampleRate);
+      const hatsOn = typeof options.hats === 'object' ? options.hats[b.label] === true : options.hats === true;
+      if (hatsOn) addHat(out, Math.round((bt + beat / 2) * sampleRate), 0.1, sampleRate, beatTimes.length);
+    }
+  }
+  let peak = 0;
+  for (let i = 0; i < out.length; i++) peak = Math.max(peak, Math.abs(out[i]!));
+  if (peak > 0.95) for (let i = 0; i < out.length; i++) out[i]! *= 0.95 / peak;
+  return { samples: out, sampleRate, bpm, beatsPerBar, beatTimes, barTimes, sections, duration, chords: bars.map((b) => b.chord) };
+}
+
+/** Song 1 of SPEC-seams.md section 7: A = C G Am F, B = Dm Em F G, structure A B A B. F -> C never occurs. */
+export const SONG1: Pick<ChordSongOptions, 'progressions' | 'structure'> = {
+  progressions: { A: 'C G Am F', B: 'Dm Em F G' },
+  structure: 'ABAB',
+};
+
+/**
+ * Song 2: song 1 plus a section C = Am F C G, which contains F -> C. C comes first. The section detector
+ * cannot tell where A ends and B begins in either song (they share F and G), so rankings are checked
+ * against the true sections.
+ */
+export const SONG2: Pick<ChordSongOptions, 'progressions' | 'structure'> = {
+  progressions: { A: 'C G Am F', B: 'Dm Em F G', C: 'Am F C G' },
+  structure: 'CABAB',
+};
+
+/** One chord, all the way through (harmonically static). */
+export const STATIC_SONG: Pick<ChordSongOptions, 'progressions' | 'structure'> = {
+  progressions: { A: 'C C C C' },
+  structure: 'AAAAAA',
+};

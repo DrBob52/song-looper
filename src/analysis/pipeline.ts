@@ -5,6 +5,8 @@ import { findCandidates } from './candidates';
 import { ANALYSIS_CONFIG } from './config';
 import { beatSyncFeatures, computeFineOnset, computeFrameData } from './features';
 import type { BeatFeatures, FrameData } from './features';
+import { buildHarmonyModel, chromaSimilarity } from './harmony';
+import type { ChromaSimilarity, HarmonyModel } from './harmony';
 import { findSections } from './sections';
 import { selfSimilarity } from './ssm';
 import type { SelfSimilarity } from './ssm';
@@ -40,6 +42,8 @@ export class AnalysisSession {
   private silent = false;
   private features: BeatFeatures | null = null;
   private ssm: SelfSimilarity | null = null;
+  private chromaSim: ChromaSimilarity | null = null;
+  private harmonyModel: HarmonyModel | null = null;
   private sections: Section[] = [];
   private candidates: LoopCandidate[] = [];
 
@@ -141,9 +145,12 @@ export class AnalysisSession {
   private computeFeaturesAndSsm(progress: ProgressFn): void {
     this.features = null;
     this.ssm = null;
+    this.chromaSim = null;
+    this.harmonyModel = null;
     if (!this.canSuggest() || !this.frameData) return;
     progress('features', 0);
     this.features = beatSyncFeatures(this.frameData, this.beatTimes);
+    this.chromaSim = chromaSimilarity(this.features.chroma, this.features.beats, this.features.chromaDims);
     progress('features', 1);
     progress('ssm', 0);
     this.ssm = selfSimilarity(this.features.combined, this.features.beats, this.features.dims, ANALYSIS_CONFIG.ssm.delay, (f) =>
@@ -158,6 +165,8 @@ export class AnalysisSession {
     if (!this.features || !this.ssm) return;
     progress('candidates', 0);
     const barBeats = this.barBeats();
+    // The harmony model needs the bar length (matches must be a bar apart), so it follows the meter.
+    this.harmonyModel = this.chromaSim ? buildHarmonyModel(this.chromaSim, this.beatsPerBar) : null;
     const { sections, boundaries } = findSections({
       ssm: this.ssm,
       features: this.features,
@@ -178,6 +187,7 @@ export class AnalysisSession {
       sections,
       boundaries,
       duration: this.duration,
+      harmony: this.harmonyModel,
     });
     progress('candidates', 1);
   }
@@ -185,6 +195,21 @@ export class AnalysisSession {
   /** Beat index of the first downbeat after the user's nudge. */
   private barPhase(): number {
     return (this.autoPhase + this.phaseShift) % this.beatsPerBar;
+  }
+
+  /** The harmonic transition model of the current beats (null when there are no features). */
+  get harmony(): HarmonyModel | null {
+    return this.harmonyModel;
+  }
+
+  /** The self-similarity matrix of the current beats (null when there are no features). */
+  get similarity(): SelfSimilarity | null {
+    return this.ssm;
+  }
+
+  /** Beat-synchronous features of the current beats (null when there are none). */
+  get beatFeatures(): BeatFeatures | null {
+    return this.features;
   }
 
   /** Bar starts as beat indices. */
