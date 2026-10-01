@@ -8,7 +8,7 @@ import { loadFixture, makeChordFixture, makeFixture, waitForAnalysis, wavFixture
 // SPEC-v1.3.md 5: skins. Every skin shares the markup and test ids; the picker in the masthead switches them.
 
 /** The skins that exist so far; each milestone adds its own. */
-const READY: SkinId[] = ['vinyl', 'studio', 'club', 'pro'];
+const READY: SkinId[] = ['vinyl', 'studio', 'club', 'pro', 'space'];
 
 const skinOf = (page: Page): Promise<string | undefined> => page.evaluate(() => document.documentElement.dataset.skin);
 /** A token's value as the page has it (the build shortens #ffffff to #fff: written out in full again for comparing). */
@@ -138,17 +138,25 @@ test('switching looks while a song plays does not stop it, and the waveform take
   await page.getByTestId('play').click();
   await expect(page.getByTestId('play')).toHaveText('Pause');
   const t0 = await page.evaluate(() => (window as unknown as { songLooper: { player: { getTime(): number } } }).songLooper.player.getTime());
+  // what the waveform draws in (light host): Pro, the wave is its ink, the played part its accent, the playhead its strong
+  // accent; Space, the scope's phosphor trace with a pale played part and an orange playhead
+  const waveOf: Partial<Record<SkinId, { wave: string; progress: string; cursor: string }>> = {
+    pro: { wave: '#16181d', progress: '#3d6df2', cursor: '#3965e8' },
+    space: { wave: '#7cffb2', progress: '#d9ffe9', cursor: '#ff9a5c' },
+  };
   for (const id of READY) {
     await page.getByTestId(`look-${id}`).check();
     await expect(page.getByTestId('play')).toHaveText('Pause');
     await expect(page.getByTestId('play')).toHaveAttribute('aria-pressed', 'true');
     expect(await page.evaluate(() => (window as unknown as { songLooper: { player: { isPlaying(): boolean } } }).songLooper.player.isPlaying())).toBe(true);
+    const expected = waveOf[id];
+    if (expected) await expect.poll(wave).toEqual(expected);
   }
   await page.waitForTimeout(400);
   const t1 = await page.evaluate(() => (window as unknown as { songLooper: { player: { getTime(): number } } }).songLooper.player.getTime());
   expect(t1).toBeGreaterThan(t0);
-  // the last of them is Pro: the wave is its ink, the played part its accent, the playhead its strong accent
-  await expect.poll(wave).toEqual({ wave: '#16181d', progress: '#3d6df2', cursor: '#3965e8' });
+  // the last of them is Space
+  await expect.poll(wave).toEqual(waveOf.space!);
   await page.getByTestId('play').click();
   await expect(page.getByTestId('play')).toHaveText('Play');
   expect(errors).toEqual([]);
@@ -488,4 +496,136 @@ test('Club: the play ring and the played part of the waveform pulse on each beat
   const calm = await pulses(ctx.page, 2200);
   expect(calm.play + calm.wave).toBe(0);
   await ctx.close();
+});
+
+// ---- Space age ----
+
+test('Space: the spec tokens in light and dark, Michroma / Exo 2 / Share Tech Mono, moulded panels and chrome pills', async ({ browser }) => {
+  const LIGHT = { '--bg': '#ebe5d8', '--panel': '#f6f2ea', '--ink': '#1b2030', '--ink-soft': '#5c6170', '--accent': '#e8622a', '--teal': '#1f7a78', '--chrome-1': '#d9dde3', '--chrome-2': '#a9b0ba' };
+  const DARK = { '--bg': '#0b1222', '--panel': '#141d33', '--ink': '#e9e4d6', '--ink-soft': '#9aa3b8', '--accent': '#ff7a3d', '--teal': '#3fb7b2' };
+  const light = await browser.newContext({ viewport: { width: 1100, height: 900 }, colorScheme: 'light' });
+  const page = await light.newPage();
+  await page.addInitScript(() => localStorage.setItem('song-looper-skin', 'space'));
+  await page.goto('/');
+  for (const [name, v] of Object.entries(LIGHT)) expect(await tokenOf(page, name), name).toBe(v);
+  expect(await page.evaluate(() => getComputedStyle(document.body).backgroundColor)).toBe('rgb(235, 229, 216)');
+  await page.evaluate(() => document.documentElement.setAttribute('data-theme', 'dark'));
+  for (const [name, v] of Object.entries(DARK)) expect(await tokenOf(page, name), name).toBe(v);
+  expect(await page.evaluate(() => getComputedStyle(document.body).backgroundColor)).toBe('rgb(11, 18, 34)');
+  await page.evaluate(() => document.documentElement.setAttribute('data-theme', 'light'));
+  for (const [name, v] of Object.entries(LIGHT)) expect(await tokenOf(page, name), name).toBe(v);
+  await light.close();
+  const dark = await browser.newContext({ viewport: { width: 1100, height: 900 }, colorScheme: 'dark' });
+  const d = await dark.newPage();
+  await d.addInitScript(() => localStorage.setItem('song-looper-skin', 'space'));
+  await d.goto('/');
+  for (const [name, v] of Object.entries(DARK)) expect(await tokenOf(d, name), name).toBe(v);
+  await dark.close();
+
+  const ctx = await browser.newContext({ viewport: { width: 1100, height: 900 } });
+  const p = await ctx.newPage();
+  await p.addInitScript(() => localStorage.setItem('song-looper-skin', 'space'));
+  await loadFixture(p, await makeChordFixture(SONG1, 'song1.wav'));
+  await waitForAnalysis(p);
+  await p.evaluate(() => (window as unknown as { songLooper: { addLoop(s: { start: number; end: number }): string | null } }).songLooper.addLoop({ start: 0, end: 8 }));
+  // type: Michroma for the display face, Exo 2 for the text, Share Tech Mono for the numbers
+  expect(await p.locator('header.top h1').evaluate((el) => getComputedStyle(el).fontFamily)).toMatch(/^["']?Michroma/);
+  expect(await p.locator('body').evaluate((el) => getComputedStyle(el).fontFamily)).toMatch(/^["']Exo 2["']/);
+  expect(await p.getByTestId('time').evaluate((el) => getComputedStyle(el).fontFamily)).toMatch(/^["']Share Tech Mono["']/);
+  // panels: 22 px radii and a soft moulded inner shadow
+  const card = await p.locator('.card').first().evaluate((el) => {
+    const s = getComputedStyle(el);
+    return { radius: s.borderTopLeftRadius, shadow: s.boxShadow };
+  });
+  expect(card.radius).toBe('22px');
+  expect(card.shadow).toContain('inset');
+  // buttons: chrome-edged pills (a gradient under the border)
+  const btn = await p.getByTestId('add-loop').evaluate((el) => {
+    const s = getComputedStyle(el);
+    return { image: s.backgroundImage, radius: parseFloat(s.borderTopLeftRadius), height: el.getBoundingClientRect().height, clip: s.backgroundClip };
+  });
+  expect(btn.image).toContain('linear-gradient');
+  expect(btn.radius).toBeGreaterThanOrEqual(btn.height / 2 - 1);
+  expect(btn.clip).toContain('border-box');
+  // the seam stamp: an oval mission patch, its word still there
+  const chip = p.getByTestId('seam-chip').first();
+  await expect(chip).toHaveText(/^(Clean|OK|Rough)$/i);
+  const patch = await chip.evaluate((el) => {
+    const s = getComputedStyle(el);
+    const r = el.getBoundingClientRect();
+    return { radius: s.borderTopLeftRadius, wide: r.width > r.height * 1.6, transform: s.transform };
+  });
+  expect(patch.radius).toBe('50%');
+  expect(patch.wide).toBe(true);
+  expect(patch.transform).toBe('none');
+  await ctx.close();
+});
+
+test('Space: the waveform window is a CRT scope in light and dark; the launch button has an orbit with a dot that orbits while playing', async ({ browser }) => {
+  for (const scheme of ['light', 'dark'] as const) {
+    const context = await browser.newContext({ viewport: { width: 1100, height: 900 }, colorScheme: scheme });
+    const page = await context.newPage();
+    await page.addInitScript(() => localStorage.setItem('song-looper-skin', 'space'));
+    await loadFixture(page, await makeChordFixture(SONG1, 'song1.wav'));
+    await waitForAnalysis(page);
+    await page.evaluate(() => (window as unknown as { songLooper: { addLoop(s: { start: number; end: number }): string | null } }).songLooper.addLoop({ start: 0, end: 8 }));
+    // dark glass with a phosphor-green trace, whatever the mode; loops are tinted overlays on the glass
+    const wave = await page.evaluate(() => {
+      const o = (window as unknown as { songLooper: { waveform: { instance: { options: { waveColor: string; progressColor: string } } } } }).songLooper.waveform.instance.options;
+      const host = document.querySelector('[data-testid=waveform]') as HTMLElement;
+      const s = getComputedStyle(host);
+      const root = host.querySelector(':scope > div')!.shadowRoot!;
+      const region = root.querySelector<HTMLElement>('[data-region-id]:not([data-region-id=selection]):not([data-region-id=highlight])')!;
+      return {
+        trace: o.waveColor,
+        radius: parseFloat(s.borderTopLeftRadius),
+        bezel: parseFloat(s.borderTopWidth),
+        glass: s.backgroundImage,
+        scanlines: getComputedStyle(host, '::after').backgroundImage,
+        regionAlpha: getComputedStyle(region).backgroundColor,
+      };
+    });
+    expect(wave.trace, scheme).toBe('#7cffb2');
+    expect(wave.radius).toBeGreaterThanOrEqual(18);
+    expect(wave.bezel).toBeGreaterThanOrEqual(7);
+    expect(wave.glass).toContain('rgb(4, 18, 12)'); // the dark glass (#04120c at the bottom of its gradient)
+    expect(wave.scanlines).toContain('repeating-linear-gradient');
+    expect(wave.regionAlpha).toMatch(/^rgba\(/); // tinted, not solid
+    // the launch button: 72 px, orange; an orbit ring round it with a dot on it
+    const launch = await page.locator('[data-testid=play] .record').evaluate((el) => {
+      const r = el.getBoundingClientRect();
+      const disc = el.querySelector('.record-disc') as HTMLElement;
+      return {
+        w: r.width,
+        h: r.height,
+        bg: getComputedStyle(el).backgroundImage,
+        orbit: getComputedStyle(disc).borderTopWidth,
+        dot: getComputedStyle(disc, '::after').width,
+        spinning: disc.getAnimations().length,
+      };
+    });
+    expect(launch.w).toBe(72);
+    expect(launch.h).toBe(72);
+    expect(launch.bg).toContain(scheme === 'light' ? 'rgb(232, 98, 42)' : 'rgb(255, 122, 61)');
+    expect(parseFloat(launch.orbit)).toBeGreaterThan(0);
+    expect(launch.dot).toBe('8px');
+    expect(launch.spinning).toBe(0); // at rest
+    await page.getByTestId('play').click();
+    await expect(page.getByTestId('play')).toHaveText('Pause');
+    await page.waitForTimeout(700);
+    // playing: the orbit turns once every 1.8 s, so the dot orbits
+    expect(await page.locator('[data-testid=play] .record-disc').evaluate((el) => el.getAnimations().filter((a) => a.playState === 'running').length)).toBe(1);
+    await page.getByTestId('play').click();
+    await context.close();
+  }
+  // with reduced motion the dot does not orbit
+  const calm = await browser.newContext({ viewport: { width: 1100, height: 900 }, reducedMotion: 'reduce' });
+  const page = await calm.newPage();
+  await page.addInitScript(() => localStorage.setItem('song-looper-skin', 'space'));
+  await loadFixture(page, await makeFixture({ structure: 'AB', barsPerSection: 4 }));
+  await page.getByTestId('play').click();
+  await expect(page.getByTestId('play')).toHaveText('Pause');
+  await page.waitForTimeout(500);
+  expect(await page.locator('[data-testid=play] .record-disc').evaluate((el) => el.getAnimations().length)).toBe(0);
+  await calm.close();
 });

@@ -602,3 +602,26 @@
   border-radius: 12px;
   border-color: rgba(255, 47, 185, 0.35);
 }
+
+/* ---- a phone: a smaller ring, so that ring, time and Export share one row ---- */
+
+@media (max-width: 480px) {
+  :root[data-skin='club'] .record {
+    width: 60px;
+    height: 60px;
+    margin: 8px;
+  }
+
+  :root[data-skin='club'] .play {
+    gap: 4px;
+    padding: 0;
+  }
+
+  :root[data-skin='club'] .play-word {
+    font-size: 0.66rem;
+  }
+
+  :root[data-skin='club'] .card {
+    padding: 14px;
+  }
+}

@@ -18,6 +18,7 @@ const LOOKS: Look[] = [
   { skin: 'studio', modes: ['light', 'dark'] },
   { skin: 'club', modes: ['light', 'dark'] },
   { skin: 'pro', modes: ['light', 'dark'] },
+  { skin: 'space', modes: ['light', 'dark'] },
 ];
 
 /** Choose a skin before the page loads (a no-op for the default). */

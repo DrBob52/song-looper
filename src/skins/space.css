@@ -1,0 +1,730 @@
+/*
+ * Skin: Space age (SPEC-v1.3.md 5.2). 1960s-70s space-age hi-fi: moulded plastic, chrome and mission control. Light (moon
+ * dust) and dark (deep space).
+ *
+ * Structure (as in style.css): every token first on the bare skin selector (light), then the dark values under
+ * prefers-color-scheme guarded by :not([data-theme='light']), then for [data-theme='dark'] (the two dark blocks agree).
+ *
+ * The waveform window is a CRT scope in both modes: a rounded chrome bezel, dark glass, a phosphor-green trace with a
+ * slight glow and faint scanlines; the loops are tinted overlays on the glass.
+ *
+ * Contrast: the spec's orange #e8622a reads 3.4:1 with white and the teal #1f7a78 4.07:1 on the moon-dust page, so text and
+ * solid buttons use --accent-strong #b8430f (white 5.5:1, 4.9:1 on the panel); the orange itself is the launch button,
+ * the orbit and the first loop (with dark ink on it, 4.8:1).
+ */
+
+:root[data-skin='space'] {
+  color-scheme: light dark;
+  /* spec tokens, light */
+  --bg: #ebe5d8;
+  --panel: #f6f2ea;
+  --panel-2: #efe9dc;
+  --ink: #1b2030;
+  --ink-soft: #5c6170;
+  --rule: #d4cdbd;
+  --accent: #e8622a;
+  --accent-strong: #b8430f;
+  --teal: #1f7a78;
+  --chrome-1: #d9dde3;
+  --chrome-2: #a9b0ba;
+  --on-accent: #ffffff;
+  /* the names the components use */
+  --paper: var(--bg);
+  --sleeve: var(--panel);
+  --label-red: var(--accent-strong);
+  --on-red: var(--on-accent);
+  --mustard: var(--teal);
+  --sticker-ink: #ffffff;
+  --vinyl: #cfc8b8;
+  --ok: #2e8b57;
+  --warn: #c07a12;
+  --bad: #c0392b;
+  --ok-text: #1a6c40;
+  --warn-text: #8a5200;
+  --bad-text: #b4281f;
+  --loop-1: #e8622a;
+  --loop-2: #1f7a78;
+  --loop-3: #c9a227;
+  --loop-4: #4a67b5;
+  --loop-5: #a24a8c;
+  --loop-1-ink: #1b2030;
+  --loop-2-ink: #ffffff;
+  --loop-3-ink: #1b2030;
+  --loop-4-ink: #ffffff;
+  --loop-5-ink: #ffffff;
+  --grid: rgba(124, 255, 178, 0.16);
+  --grid-bar: rgba(124, 255, 178, 0.45);
+  --wash: rgba(27, 32, 48, 0.06);
+  --shadow: 0 1px 0 rgba(255, 255, 255, 0.8), 0 6px 14px -8px rgba(27, 32, 48, 0.35);
+  --shadow-lift: 0 1px 0 rgba(255, 255, 255, 0.8), 0 10px 20px -8px rgba(27, 32, 48, 0.45);
+  --shadow-bar: 0 -12px 28px -14px rgba(27, 32, 48, 0.5);
+  --scrim: rgba(27, 32, 48, 0.5);
+  --region-alpha: 0.34;
+  --region-alpha-on: 0.5;
+  --cut-fill: rgba(0, 0, 0, 0.7);
+  --cut-line: rgba(124, 255, 178, 0.6);
+  --cut-ink: #d9ffe9;
+  --cut-label-bg: rgba(0, 0, 0, 0.8);
+  --grain: none;
+  --scope-bg: #04120c;
+  --scope-ink: #d9ffe9;
+  --wave: #7cffb2;
+  --wave-progress: #d9ffe9;
+  --cursor: #ff9a5c;
+  --font-display: 'Michroma', 'Eurostile', 'Microgramma', 'Arial Black', 'Helvetica Neue', Arial, sans-serif;
+  --font-body: 'Exo 2', ui-sans-serif, system-ui, -apple-system, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif;
+  --font-mono: 'Share Tech Mono', ui-monospace, 'SF Mono', Menlo, Consolas, 'Liberation Mono', monospace;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root[data-skin='space']:not([data-theme='light']) {
+    color-scheme: dark;
+    --bg: #0b1222;
+    --panel: #141d33;
+    --panel-2: #1b2640;
+    --ink: #e9e4d6;
+    --ink-soft: #9aa3b8;
+    --rule: #26324f;
+    --accent: #ff7a3d;
+    --accent-strong: #ff7a3d;
+    --teal: #3fb7b2;
+    --chrome-1: #4a5470;
+    --chrome-2: #272f45;
+    --on-accent: #0b1222;
+    --sticker-ink: #0b1222;
+    --vinyl: #070c18;
+    --ok: #5fd6a0;
+    --warn: #f0b84a;
+    --bad: #ff8a80;
+    --ok-text: #5fd6a0;
+    --warn-text: #f0b84a;
+    --bad-text: #ff8a80;
+    --loop-1: #ff7a3d;
+    --loop-2: #3fb7b2;
+    --loop-3: #e6c352;
+    --loop-4: #7d97e6;
+    --loop-5: #d27fc0;
+    --loop-1-ink: #0b1222;
+    --loop-2-ink: #0b1222;
+    --loop-3-ink: #0b1222;
+    --loop-4-ink: #0b1222;
+    --loop-5-ink: #0b1222;
+    --wash: rgba(233, 228, 214, 0.07);
+    --shadow: 0 1px 0 rgba(255, 255, 255, 0.06), 0 6px 14px -8px rgba(0, 0, 0, 0.7);
+    --shadow-lift: 0 1px 0 rgba(255, 255, 255, 0.08), 0 10px 20px -8px rgba(0, 0, 0, 0.8);
+    --shadow-bar: 0 -12px 30px -14px rgba(0, 0, 0, 0.9);
+    --scrim: rgba(3, 6, 14, 0.7);
+    --region-alpha: 0.3;
+    --region-alpha-on: 0.46;
+  }
+}
+
+:root[data-skin='space'][data-theme='dark'] {
+  color-scheme: dark;
+  --bg: #0b1222;
+  --panel: #141d33;
+  --panel-2: #1b2640;
+  --ink: #e9e4d6;
+  --ink-soft: #9aa3b8;
+  --rule: #26324f;
+  --accent: #ff7a3d;
+  --accent-strong: #ff7a3d;
+  --teal: #3fb7b2;
+  --chrome-1: #4a5470;
+  --chrome-2: #272f45;
+  --on-accent: #0b1222;
+  --sticker-ink: #0b1222;
+  --vinyl: #070c18;
+  --ok: #5fd6a0;
+  --warn: #f0b84a;
+  --bad: #ff8a80;
+  --ok-text: #5fd6a0;
+  --warn-text: #f0b84a;
+  --bad-text: #ff8a80;
+  --loop-1: #ff7a3d;
+  --loop-2: #3fb7b2;
+  --loop-3: #e6c352;
+  --loop-4: #7d97e6;
+  --loop-5: #d27fc0;
+  --loop-1-ink: #0b1222;
+  --loop-2-ink: #0b1222;
+  --loop-3-ink: #0b1222;
+  --loop-4-ink: #0b1222;
+  --loop-5-ink: #0b1222;
+  --wash: rgba(233, 228, 214, 0.07);
+  --shadow: 0 1px 0 rgba(255, 255, 255, 0.06), 0 6px 14px -8px rgba(0, 0, 0, 0.7);
+  --shadow-lift: 0 1px 0 rgba(255, 255, 255, 0.08), 0 10px 20px -8px rgba(0, 0, 0, 0.8);
+  --shadow-bar: 0 -12px 30px -14px rgba(0, 0, 0, 0.9);
+  --scrim: rgba(3, 6, 14, 0.7);
+  --region-alpha: 0.3;
+  --region-alpha-on: 0.46;
+}
+
+:root[data-skin='space'][data-theme='light'] {
+  color-scheme: light;
+}
+
+/* ---- type and page ---- */
+
+:root[data-skin='space'] header.top h1 {
+  font-weight: 400;
+  font-stretch: 100%;
+  letter-spacing: 0.04em;
+  font-size: clamp(1.15rem, 4.4vw, 1.75rem);
+}
+
+:root[data-skin='space'] header.top p {
+  font-variant-caps: normal;
+  letter-spacing: 0.06em;
+  font-size: 0.92rem;
+}
+
+:root[data-skin='space'] .looks-label {
+  font-variant-caps: normal;
+  letter-spacing: 0.06em;
+  font-size: 0.82rem;
+}
+
+:root[data-skin='space'] .look {
+  border: 2px solid transparent;
+  background:
+    linear-gradient(var(--panel), var(--panel)) padding-box,
+    linear-gradient(180deg, var(--chrome-1), var(--chrome-2) 55%, var(--chrome-1)) border-box;
+  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.18);
+}
+
+:root[data-skin='space'] .look:has(input:checked) {
+  box-shadow:
+    0 0 0 2px var(--accent-strong),
+    0 1px 2px rgba(0, 0, 0, 0.18);
+}
+
+/* ---- panels: large radii, a moulded inner shadow ---- */
+
+:root[data-skin='space'] .card {
+  border-radius: 22px;
+  border: 1px solid color-mix(in srgb, var(--chrome-2) 55%, var(--panel));
+  padding: 20px 22px;
+  background: linear-gradient(180deg, color-mix(in srgb, var(--panel) 92%, #fff), var(--panel));
+  box-shadow:
+    inset 0 2px 5px rgba(255, 255, 255, 0.55),
+    inset 0 -8px 16px -10px rgba(27, 32, 48, 0.3),
+    var(--shadow);
+}
+
+:root[data-skin='space'] .card > h2,
+:root[data-skin='space'] .card-head h2 {
+  font-weight: 400;
+  font-stretch: 100%;
+  font-size: 0.68rem;
+  letter-spacing: 0.16em;
+  color: var(--ink);
+}
+
+:root[data-skin='space'] .side-tag {
+  color: var(--accent-strong);
+}
+
+/* ---- buttons: chrome-edged pills ---- */
+
+:root[data-skin='space'] .btn {
+  border: 2px solid transparent;
+  background:
+    linear-gradient(var(--panel), var(--panel)) padding-box,
+    linear-gradient(180deg, var(--chrome-1), var(--chrome-2) 55%, var(--chrome-1)) border-box;
+  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.2);
+  font-family: var(--font-body);
+  font-weight: 600;
+}
+
+:root[data-skin='space'] .btn:hover:not(:disabled) {
+  background:
+    linear-gradient(var(--wash), var(--wash)) padding-box,
+    linear-gradient(var(--panel), var(--panel)) padding-box,
+    linear-gradient(180deg, var(--chrome-1), var(--chrome-2) 55%, var(--chrome-1)) border-box;
+}
+
+:root[data-skin='space'] .btn:active:not(:disabled) {
+  background:
+    linear-gradient(var(--ink), var(--ink)) padding-box,
+    linear-gradient(180deg, var(--chrome-1), var(--chrome-2) 55%, var(--chrome-1)) border-box;
+  color: var(--panel);
+}
+
+:root[data-skin='space'] .btn.primary,
+:root[data-skin='space'] .btn.export {
+  background:
+    linear-gradient(var(--accent-strong), var(--accent-strong)) padding-box,
+    linear-gradient(180deg, var(--chrome-1), var(--chrome-2) 55%, var(--chrome-1)) border-box;
+  color: var(--on-accent);
+  border-color: transparent;
+}
+
+:root[data-skin='space'] .btn.primary:hover:not(:disabled),
+:root[data-skin='space'] .btn.export:hover:not(:disabled) {
+  background:
+    linear-gradient(var(--accent-strong), var(--accent-strong)) padding-box,
+    linear-gradient(180deg, var(--chrome-1), var(--chrome-2) 55%, var(--chrome-1)) border-box;
+  filter: brightness(1.12);
+}
+
+:root[data-skin='space'] .btn.primary:active:not(:disabled),
+:root[data-skin='space'] .btn.export:active:not(:disabled) {
+  background:
+    linear-gradient(var(--accent-strong), var(--accent-strong)) padding-box,
+    linear-gradient(180deg, var(--chrome-1), var(--chrome-2) 55%, var(--chrome-1)) border-box;
+  color: var(--on-accent);
+  filter: brightness(0.9);
+}
+
+:root[data-skin='space'] .btn.quiet {
+  background: none;
+  border-color: transparent;
+  box-shadow: none;
+  text-decoration: none;
+}
+
+:root[data-skin='space'] .btn.quiet:hover:not(:disabled) {
+  background: var(--wash);
+}
+
+:root[data-skin='space'] .btn.active {
+  background:
+    linear-gradient(var(--ink), var(--ink)) padding-box,
+    linear-gradient(180deg, var(--chrome-1), var(--chrome-2) 55%, var(--chrome-1)) border-box;
+  color: var(--panel);
+}
+
+:root[data-skin='space'] .segmented {
+  border: 2px solid transparent;
+  background: linear-gradient(180deg, var(--chrome-1), var(--chrome-2) 55%, var(--chrome-1)) border-box;
+}
+
+:root[data-skin='space'] .segmented .btn {
+  border: 0;
+  box-shadow: none;
+  background: var(--panel);
+  border-radius: 0;
+}
+
+:root[data-skin='space'] .segmented .btn + .btn {
+  border-left: 2px solid var(--chrome-2);
+}
+
+:root[data-skin='space'] .segmented .btn.active {
+  background: var(--ink);
+  color: var(--panel);
+}
+
+:root[data-skin='space'] .segmented .btn.active:active:not(:disabled) {
+  background: var(--ink);
+  color: var(--panel);
+}
+
+:root[data-skin='space'] input.nf-input {
+  background: var(--panel-2);
+  border: 1.5px solid var(--ink-soft);
+  border-radius: 10px;
+  box-shadow: inset 0 2px 4px rgba(27, 32, 48, 0.18);
+}
+
+:root[data-skin='space'] input.nf-input:focus {
+  border-color: var(--teal);
+}
+
+:root[data-skin='space'] input[type='text'],
+:root[data-skin='space'] select {
+  border-bottom-color: var(--ink-soft);
+}
+
+:root[data-skin='space'] input[type='range'],
+:root[data-skin='space'] input[type='checkbox'],
+:root[data-skin='space'] input[type='radio'] {
+  accent-color: var(--accent-strong);
+}
+
+:root[data-skin='space'] :focus-visible {
+  outline: 2px solid var(--teal);
+  outline-offset: 2px;
+  box-shadow: 0 0 0 4px color-mix(in srgb, var(--teal) 25%, transparent);
+}
+
+:root[data-skin='space'] .look:has(input:focus-visible) {
+  outline-color: var(--teal);
+}
+
+:root[data-skin='space'] kbd {
+  background: var(--panel-2);
+  border-radius: 6px;
+}
+
+/* ---- the transport: a console panel and a round orange launch button with an orbit ---- */
+
+:root[data-skin='space'] .transport {
+  border: 1px solid color-mix(in srgb, var(--chrome-2) 55%, var(--panel));
+  border-radius: 30px;
+  background: linear-gradient(180deg, color-mix(in srgb, var(--panel) 90%, #fff), var(--panel));
+  box-shadow:
+    inset 0 2px 5px rgba(255, 255, 255, 0.5),
+    var(--shadow-bar);
+}
+
+:root[data-skin='space'] .play {
+  gap: 20px;
+  padding-right: 6px;
+}
+
+:root[data-skin='space'] .record {
+  width: 72px;
+  height: 72px;
+  margin: 8px;
+  border-radius: 50%;
+  background: radial-gradient(circle at 36% 28%, color-mix(in srgb, var(--accent) 70%, #fff), var(--accent) 55%, color-mix(in srgb, var(--accent) 75%, #000));
+  border: 3px solid transparent;
+  background-clip: padding-box;
+  box-shadow:
+    0 0 0 3px var(--chrome-2),
+    inset 0 -4px 8px rgba(0, 0, 0, 0.3),
+    0 3px 8px rgba(0, 0, 0, 0.3);
+}
+
+:root[data-skin='space'] .record-label,
+:root[data-skin='space'] .record-sheen {
+  display: none;
+}
+
+/* the orbit: a thin ring round the button with a small dot on it; the ring turns while it plays (once every 1.8 s / speed,
+   as the record does), so the dot orbits */
+:root[data-skin='space'] .record-disc {
+  inset: -8px;
+  border-radius: 50%;
+  background: none;
+  border: 1.5px solid var(--chrome-2);
+  box-shadow: none;
+}
+
+:root[data-skin='space'] .record-disc::after {
+  content: '';
+  position: absolute;
+  top: -5px;
+  left: 50%;
+  width: 8px;
+  height: 8px;
+  margin-left: -4px;
+  border-radius: 50%;
+  background: var(--teal);
+  box-shadow: 0 0 6px var(--teal);
+}
+
+:root[data-skin='space'] .record-glyph {
+  border-color: transparent transparent transparent var(--on-accent);
+}
+
+:root[data-skin='space'] .play[aria-pressed='true'] .record-glyph {
+  background: linear-gradient(90deg, var(--on-accent) 0 36%, transparent 36% 64%, var(--on-accent) 64%);
+}
+
+:root[data-skin='space'] .play-word {
+  font-weight: 400;
+  font-stretch: 100%;
+  font-size: 0.8rem;
+  letter-spacing: 0.12em;
+}
+
+:root[data-skin='space'] .transport .time {
+  font-weight: 400;
+  font-size: 1.05rem;
+}
+
+/* ---- loops, stamps, tracks ---- */
+
+:root[data-skin='space'] .region {
+  border-radius: 20px;
+  border: 1px solid color-mix(in srgb, var(--chrome-2) 50%, var(--panel));
+  border-top: 4px solid var(--loop-color, var(--rule));
+  background: var(--panel-2);
+  box-shadow: inset 0 2px 5px rgba(255, 255, 255, 0.4);
+}
+
+:root[data-skin='space'] .region.selected {
+  border-color: var(--teal);
+  border-top-color: var(--loop-color, var(--teal));
+  box-shadow: 0 0 0 2px var(--teal);
+}
+
+:root[data-skin='space'] .loop-label {
+  border: 3px solid transparent;
+  background-clip: padding-box;
+  box-shadow:
+    0 0 0 2px var(--chrome-2),
+    inset 0 -3px 6px rgba(0, 0, 0, 0.25);
+}
+
+:root[data-skin='space'] .loop-label::after {
+  display: none;
+}
+
+:root[data-skin='space'] .loop-play {
+  border: 2px solid var(--chrome-2);
+}
+
+:root[data-skin='space'] .region-title strong,
+:root[data-skin='space'] .cut-head strong {
+  font-family: var(--font-display);
+  font-weight: 400;
+  font-stretch: 100%;
+  letter-spacing: 0.1em;
+  font-size: 0.72rem;
+}
+
+:root[data-skin='space'] .cut {
+  border-radius: 18px;
+  border: 1px dashed var(--ink-soft);
+  border-left: 4px solid var(--ink-soft);
+  background: var(--panel-2);
+}
+
+:root[data-skin='space'] .cut.selected {
+  border-color: var(--teal);
+  box-shadow: 0 0 0 2px var(--teal);
+}
+
+:root[data-skin='space'] .cut-glyph {
+  border-radius: 50%;
+}
+
+/* the seam stamp: an oval mission patch, a double rim stitched round it */
+:root[data-skin='space'] .chip {
+  transform: none;
+  -webkit-mask-image: none;
+  mask-image: none;
+  border-width: 2px;
+  border-radius: 50%;
+  padding: 3px 16px 2px;
+  font-family: var(--font-display);
+  font-weight: 400;
+  font-size: 0.64rem;
+  letter-spacing: 0.14em;
+  line-height: 1.5;
+  background: color-mix(in srgb, currentColor 8%, var(--panel));
+  box-shadow:
+    0 0 0 2px var(--panel),
+    0 0 0 3.5px currentColor;
+  margin: 0 4px;
+}
+
+:root[data-skin='space'] .suggestion {
+  border-radius: 14px;
+}
+
+:root[data-skin='space'] .suggestion-rank {
+  font-family: var(--font-display);
+  font-stretch: 100%;
+  font-weight: 400;
+  font-size: 0.8rem;
+  color: var(--accent-strong);
+}
+
+:root[data-skin='space'] .stars {
+  color: var(--accent-strong);
+}
+
+:root[data-skin='space'] .big {
+  font-weight: 400;
+}
+
+:root[data-skin='space'] .length-arrow {
+  color: var(--teal);
+}
+
+:root[data-skin='space'] .length-caption {
+  font-variant-caps: normal;
+  letter-spacing: 0.08em;
+  font-size: 0.82rem;
+}
+
+/* ---- the waveform window: a CRT scope with a rounded chrome bezel, dark glass, a phosphor trace and scanlines ---- */
+
+:root[data-skin='space'] .wave-host {
+  border: 10px solid transparent;
+  border-radius: 24px;
+  background:
+    linear-gradient(180deg, #0a1f17, var(--scope-bg)) padding-box,
+    linear-gradient(145deg, var(--chrome-1), var(--chrome-2) 60%, var(--chrome-1)) border-box;
+  box-shadow:
+    inset 0 0 26px rgba(0, 0, 0, 0.85),
+    0 2px 6px rgba(0, 0, 0, 0.3);
+}
+
+/* faint scanlines over the glass (drawn over the trace on purpose; they take no clicks) */
+:root[data-skin='space'] .wave-host::after {
+  content: '';
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  background: repeating-linear-gradient(180deg, rgba(0, 0, 0, 0.16) 0 1px, transparent 1px 3px);
+  border-radius: 14px;
+  z-index: 5;
+}
+
+:root[data-skin='space'] .wave-host ::part(canvases) {
+  filter: drop-shadow(0 0 4px rgba(124, 255, 178, 0.6));
+}
+
+:root[data-skin='space'] .wave-host ::part(region-content) {
+  color: var(--scope-ink);
+}
+
+:root[data-skin='space'] .wave-host ::part(cursor) {
+  background: var(--cursor) !important;
+}
+
+:root[data-skin='space'] .wave-host ::part(cursor)::after {
+  background: var(--cursor);
+  box-shadow: 0 0 0 1.5px var(--scope-bg);
+}
+
+:root[data-skin='space'] .tl-bar {
+  height: 28px;
+  border: 2px solid var(--chrome-2);
+  border-radius: 14px;
+}
+
+:root[data-skin='space'] .tl-bar::after {
+  display: none;
+}
+
+:root[data-skin='space'] .tl-ending {
+  border-radius: 14px;
+}
+
+:root[data-skin='space'] .tl-block {
+  line-height: 24px;
+  color: #fff;
+}
+
+:root[data-skin='space'] .progress .track {
+  height: 8px;
+  border: 1px solid var(--chrome-2);
+  background: var(--scope-bg);
+}
+
+:root[data-skin='space'] .progress .fill {
+  background: linear-gradient(90deg, var(--teal), #7cffb2);
+}
+
+/* ---- drop zone ---- */
+
+:root[data-skin='space'] .dropzone {
+  width: min(100%, 560px);
+  margin: 16px auto 0;
+}
+
+:root[data-skin='space'] .dropzone .sleeve-record,
+:root[data-skin='space'] .dropzone .sleeve-ring,
+:root[data-skin='space'] .dropzone .sleeve-side {
+  display: none;
+}
+
+:root[data-skin='space'] .dropzone .sleeve-face {
+  aspect-ratio: auto;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  padding: 40px 24px;
+  border: 2px dashed var(--teal);
+  border-radius: 26px;
+  background: var(--panel);
+  box-shadow: inset 0 2px 5px rgba(255, 255, 255, 0.4);
+}
+
+:root[data-skin='space'] .dropzone:hover .sleeve-face,
+:root[data-skin='space'] .dropzone.drag .sleeve-face {
+  transform: none;
+  border-color: var(--accent-strong);
+  box-shadow: 0 0 0 2px var(--accent-strong);
+}
+
+:root[data-skin='space'] .dropzone .dz-title {
+  font-family: var(--font-display);
+  font-weight: 400;
+  font-stretch: 100%;
+  letter-spacing: 0.06em;
+  font-size: 0.85rem;
+  line-height: 1.5;
+}
+
+:root[data-skin='space'] .dropzone.compact {
+  width: 100%;
+  margin: 0;
+}
+
+:root[data-skin='space'] .dropzone.compact .sleeve-face {
+  flex-direction: row;
+  justify-content: flex-start;
+  align-items: center;
+  padding: 10px 20px;
+  border: 1px solid color-mix(in srgb, var(--chrome-2) 55%, var(--panel));
+  border-radius: 22px;
+}
+
+:root[data-skin='space'] .dropzone.compact .sleeve-record {
+  display: none;
+}
+
+:root[data-skin='space'] .dropzone.compact .dz-title {
+  font-family: var(--font-body);
+  font-weight: 600;
+  letter-spacing: 0;
+  font-size: 0.95rem;
+}
+
+/* ---- dialog ---- */
+
+:root[data-skin='space'] dialog.export-dialog {
+  border: 2px solid var(--chrome-2);
+  border-radius: 26px;
+  box-shadow: 0 24px 60px rgba(0, 0, 0, 0.45);
+}
+
+:root[data-skin='space'] .export-form h2 {
+  font-weight: 400;
+  font-stretch: 100%;
+  letter-spacing: 0.1em;
+  font-size: 0.85rem;
+}
+
+:root[data-skin='space'] .export-form fieldset {
+  border-radius: 16px;
+}
+
+@media (max-width: 480px) {
+  :root[data-skin='space'] .card {
+    padding: 14px 14px;
+  }
+
+  :root[data-skin='space'] .record {
+    width: 56px;
+    height: 56px;
+    margin: 8px;
+  }
+
+  :root[data-skin='space'] .play {
+    gap: 4px;
+    padding: 0;
+  }
+
+  :root[data-skin='space'] .play-word {
+    font-size: 0.6rem;
+  }
+
+  :root[data-skin='space'] .transport .time {
+    font-size: 0.9rem;
+  }
+
+  :root[data-skin='space'] .wave-host {
+    border-width: 7px;
+    border-radius: 18px;
+  }
+}
