@@ -556,3 +556,33 @@ for (const scheme of ['light', 'dark'] as const) {
     await context.close();
   });
 }
+
+for (const [name, width] of [
+  ['desktop', 1100],
+  ['phone', 380],
+] as const) {
+  test(`${name}: nothing in a card sticks out past the card's padding`, async ({ browser }) => {
+    const context = await browser.newContext({ viewport: { width, height: 900 } });
+    const page = await context.newPage();
+    await loadChords(page);
+    await addLoop(page, 0, 8);
+    await addLoop(page, 16, 30);
+    await expect(page.getByTestId('seam-chip').first()).toBeVisible();
+    await page.locator('summary', { hasText: 'Advanced' }).click();
+    const overflowing = await page.evaluate(() => {
+      const out: string[] = [];
+      for (const card of document.querySelectorAll('.card')) {
+        const box = card.getBoundingClientRect();
+        for (const el of card.querySelectorAll('*')) {
+          if (el.closest('.wave-host')) continue;
+          const r = el.getBoundingClientRect();
+          if (r.width === 0 || r.height === 0) continue;
+          if (r.right > box.right - 9 || r.left < box.left + 9) out.push(`${(el as HTMLElement).className || el.tagName} ${Math.round(r.left)}..${Math.round(r.right)} in ${Math.round(box.left)}..${Math.round(box.right)}`);
+        }
+      }
+      return out.slice(0, 10);
+    });
+    expect(overflowing).toEqual([]);
+    await context.close();
+  });
+}

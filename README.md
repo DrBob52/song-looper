@@ -5,11 +5,18 @@ each should repeat, preview the result, and export an extended version of the so
 
 Everything runs in the browser. There is no server, no API key and nothing is uploaded.
 
-![Song Looper screenshot](docs/screenshot.png)
+![Song Looper screenshot, light](docs/screenshot.png)
 
 *A synthetic chord-progression demo. Loop 1 has a bridge, so its seam reads Clean and the extended timeline shows
 the hatched bridge bars. Loop 2 ends one bar early on a chord change the song never makes: Rough, with a cleaner
 loop suggested nearby.*
+
+| Dark | Phone (380 px) | Phone, dark |
+|---|---|---|
+| ![Dark theme](docs/screenshot-dark.png) | ![Phone layout](docs/screenshot-phone.png) | ![Phone layout, dark](docs/screenshot-phone-dark.png) |
+
+The look is "vinyl and analog": a warm paper page, a spinning record as the play/pause button, record-sleeve cards for
+the loops and rubber-stamp seam chips. See [Design notes](#design-notes).
 
 ## What it does
 
@@ -23,17 +30,57 @@ loop suggested nearby.*
 - Shows the waveform (wavesurfer.js v7 + Regions plugin) with the beat and bar grid and section markers. Drag on
   it to select a span, press `L` to turn the selection into a loop, drag edges to fine-tune (they snap to bars, or
   beats; hold Shift to turn snapping off). Loops cannot overlap.
-- Each loop has its own repeat count (1 to 64). Or set a target length and let the app choose repeat counts.
+- Each loop has its own start and end, typed to the millisecond (see [Exact loop times](#exact-loop-times)), and
+  its own repeat count (1 to 9,999). Or set a target length and let the app choose repeat counts.
 - Previews the original or the extended song, a loop on repeat, or just the seam (the jump from a loop's end back
-  to its start) through the same crossfade code the export uses.
+  to its start) through the same crossfade code the export uses. A big round record button in the sticky bar plays
+  and pauses, and each loop row has its own play button.
+- Plays and exports extended songs of any length the WAV format can hold, see [Long songs](#long-songs).
 - Smooths the seam of every loop so the join sounds like part of the song, and says how it went with a Clean / OK /
   Rough chip. Optionally bridges a rough seam with a few bars of the song. See
   [How seams are smoothed](#how-seams-are-smoothed).
 - Speed (0.5x to 1.5x, tempo only) and pitch (-12 to +12 semitones) for preview, optionally baked into the export.
 - Exports 16-bit or 24-bit PCM or 32-bit float WAV.
 
-Keyboard: `Space` play/pause, `L` add a loop at the selection (or at the playhead), `Delete` remove the selected
-loop, `Esc` clear the selection.
+Keyboard: `Space` play/pause, `L` add a loop at the selection (or at the playhead), `I` / `O` set the start / end of
+the selected loop (or of a new one) to the playhead, `Delete` remove the selected loop, `Esc` clear the selection.
+In a number field: `Up` / `Down` step (`Shift` for 10 times as much, `Alt` for a tenth), `Enter` or leaving the field
+applies, `Esc` puts the old value back. The mouse wheel never changes a number.
+
+### Exact loop times
+
+Every loop row has **Start** and **End** fields. Type a time as `75`, `75.25`, `1:15.250` or `1:02:03.5`, press
+`Enter`, and the loop edge goes there, to the millisecond. Next to each field are `-1 beat`, `-10 ms`, `+10 ms` and
+`+1 beat` nudges, and **Set from playhead** (the `I` and `O` keys do the same for the selected loop). A bad value
+(past the end of the song, an end before the start, a loop shorter than 100 ms, or one that would overlap another
+loop) is refused with a message under the field and the old value stays.
+
+Typed and nudged times are used as they are: they are never snapped to bars or beats (snapping applies only to
+dragging an edge on the waveform). Because smoothing would move the edge, the loop's **Smooth seam** is switched off
+when you type, nudge or set from the playhead, and a notice says so. Turning it back on lets the app move the join
+again. As in every version, the renderer still moves a loop edge by at most 2 ms to the nearest zero crossing so the
+join doesn't click; the fields and the timeline show the time you gave.
+
+### Numbers
+
+Every adjustable number (loop start and end, repeats, target length, speed, pitch, BPM override, bar-line shift,
+waveform zoom and the seam fade) is the same field: type it, step it with the arrow keys, or use its slider or
+`-`/`+` buttons, which stay in step with it. Holding a stepper button speeds up after a moment.
+
+### Long songs
+
+- **Repeats** go up to 9,999 per loop. There is no time limit on the extended song. The only limit is the WAV file
+  itself: sizes are 32-bit, so a file is under 4 GB. The length panel shows the longest extended song for the chosen
+  bit depth (for a 44.1 kHz stereo song about 6 h 45 min at 16-bit, 4 h 30 min at 24-bit and 3 h 22 min at 32-bit
+  float), and a plan that goes over says so, with Export disabled until you change the repeats, the target or the
+  bit depth. The target-length solver never goes over it.
+- **Export** renders the song in pieces of about 10 s (`renderRange`), writes each piece into the file as it is made,
+  and never holds the whole song in memory. It shows progress with the elapsed and remaining time and has a **Cancel**
+  button that stops the work and frees what was written. The pieces are bit-identical to the same stretch of one big
+  render. Inside a claude.ai artifact the file is zipped for saving, and the zip is also kept under 4 GB.
+- **Preview** of the extended song plays in 5 s chunks that are started back to back (three ahead), through the same
+  renderer and the same speed/pitch node, so a very long song starts quickly, seeks anywhere and changes speed and
+  pitch while playing, with no gap or click at the joins.
 
 ## Run it locally
 
@@ -62,6 +109,8 @@ npm run demo-song    # writes tests/fixtures/demo-song.generated.wav (git-ignore
 | `npm test` | Vitest unit tests |
 | `npm run test:e2e` | Playwright end-to-end tests (builds and serves the site first) |
 | `npm run demo-song` | Write a synthetic demo song WAV |
+| `BIG_EXPORT_SECONDS=14400 npx playwright test big-export` | Opt-in: export a very long extended song through the real UI and check the WAV header against the file on disk (`BIG_EXPORT_BITS=16\|24\|32`, `BIG_EXPORT_ARTIFACT=1` to save it zipped as a claude.ai artifact would) |
+| `SCREENSHOT=1 npx playwright test screenshot` | Regenerate the four screenshots in `docs/` |
 
 ## Tests
 
@@ -74,17 +123,36 @@ npm run demo-song    # writes tests/fixtures/demo-song.generated.wav (git-ignore
   with and without the chord change in the song, suggestions, rotation (length unchanged, never more than a beat,
   lands before a hit), micro-alignment (a +15 ms edge recovered within 2 ms, one onset in the seam window), the fade
   limit at poor harmony, the level step after a 3 dB crescendo, bridge search, render length and target solver, Undo,
-  and how stale seam data is dropped when the tempo, meter or bar lines change.
+  and how stale seam data is dropped when the tempo, meter or bar lines change. The long-song work has its own
+  tests: `renderRange` equals the same stretch of a reference full render sample for sample (plain, with a bridge,
+  with seam plans, level ramps and ramps that straddle a boundary, at several block sizes), the export pieces equal one
+  full render (also with speed and pitch baked in), the WAV encoder and zip layout at the 4 GB edges (without
+  allocating the file), the number parser and formatter, and a chunked preview scheduler rendered through an
+  `OfflineAudioContext` (no gap and no click at a join, also at a different sample rate and with a seek). The design
+  tokens have a WCAG contrast test (4.5:1 for text, 3:1 for stamp borders, both papers, both themes) and a check that
+  the two dark blocks in `style.css` say the same thing.
 - **End to end (Playwright, Chromium)**: load a generated WAV, select a span, add a loop, repeat it, export,
   and check the downloaded WAV's header and duration (and decode it with `decodeAudioData`); suggestions, preview,
   seam audition, snapping, target-length mode, the timeline strip, live speed/pitch (through the real AudioWorklet),
   baked export, the seam chip, Undo, nearby loops, bridges (chip, hatched strip, export length), error and edge
   cases, a 380 px layout check in light and dark mode, saving as a claude.ai artifact, and serving the built site
-  from a GitHub Pages style sub-path.
+  from a GitHub Pages style sub-path. v1.2 added: typed and nudged loop times, `I`/`O` keys and the Smooth seam
+  notice; every number field (typing, steppers, slider sync, bad values); a long export that is checked piece by
+  piece and cancelled part way; the live preview (start fast, seek, change speed and pitch while it plays);
+  and the design (the record spins at 1.8 s / speed and stops at the same angle, reduced motion, no horizontal scroll
+  at 380 px, nothing sticking out of its card, both themes, fonts blocked).
 
 Playwright is pinned to 1.56.x so that its Chromium revision matches the browser pre-installed in this
 environment under `PLAYWRIGHT_BROWSERS_PATH`. To use another browser, set `CHROMIUM_PATH` to its executable.
-`SCREENSHOT=1 npx playwright test screenshot` regenerates `docs/screenshot.png`.
+
+The e2e tests stub the Google Fonts stylesheet (`tests/e2e/fixtures.ts`), so they never depend on the network and the
+app falls back to its system fonts there. `SCREENSHOT=1 npx playwright test screenshot` regenerates the four images in
+`docs/` (light, dark, phone, phone dark). To get the real fonts in them when the machine can't reach Google Fonts,
+download the stylesheet and the font files once (for a Chrome user agent) into a folder and set `FONTS_DIR` to it;
+`tests/e2e/screenshot.spec.ts` explains the steps.
+
+`big-export` writes a real file of up to 4 GB, so it is opt-in. It uses a persistent browser profile because
+Chromium's default test contexts keep blobs in memory only and cannot hold more than about 2 GiB.
 
 ## Deploy (GitHub Pages)
 
@@ -219,6 +287,28 @@ are hatched in the loop's colour), seam audition, loop preview and export all in
 Seams that read Rough show a "Seam sounds rough? Try Bridge" hint. Stem separation (giving drums, bass and vocals
 each their own seam) is not part of this version.
 
+## Design notes
+
+The redesign (SPEC-v1.2.md, sections 6 to 10) is CSS and markup only; no behaviour, `data-testid` or shortcut changed.
+
+- **Tokens.** Every colour, font and radius is a custom property defined first on bare `:root` at the top of
+  `src/style.css`. Dark mode redefines them in `@media (prefers-color-scheme: dark)` for
+  `:root:not([data-theme='light'])` and again for `:root[data-theme='dark']` (the two blocks are identical, which a
+  test checks), so the OS setting is followed unless `data-theme` forces light or dark.
+- **Type.** Archivo (variable width 62 to 125 and weight 400 to 800) for headings and body, IBM Plex Mono for every
+  time and number, both from Google Fonts, which is the only external host. If the request is blocked the page
+  falls back to Arial Narrow and the system fonts and nothing else changes.
+- **Record.** The big round play/pause is a record with a red label. Playing turns it once every 1.8 s divided by the
+  speed (33 1/3 rpm at 1.00x), pausing stops it where it is, and starting is a short "needle drop" (the label
+  settles in 150 ms, the spin eases in over 400 ms). With `prefers-reduced-motion` it doesn't turn, and the other
+  animations are off too.
+- **Cards and stamps.** Suggestions read as a tracklist (A1, A2, ...), each loop is a sleeve card with a round
+  label showing its number and repeats in the loop's colour, and the seam result is a rubber stamp:
+  Clean (green), OK (amber), Rough (red), text and border at WCAG AA.
+- **Accessibility.** Text is at least 4.5:1 on both papers in both themes (unit-tested), colour is never the only
+  carrier (stamps and loops carry words and numbers), focus rings are visible, and the page has no horizontal scroll
+  at 380 px.
+
 ## Project layout
 
 ```
@@ -226,8 +316,9 @@ index.html
 src/
   main.ts  app.ts  model.ts  plan.ts  grid.ts
   ui/        dropzone, waveform, suggestionsPanel, regionsPanel, lengthPanel, timelineStrip, transport,
-             exportDialog, analysisControls, seamText
-  audio/     decode (+ sniff), player, render, preview, target, stretch, wav, save, renderClient/worker
+             exportDialog, analysisControls, seamText, numberField, holdRepeat, record, loopColors
+  audio/     decode (+ sniff), player, render (renderRange), preview, stream, chunkSource, target, stretch,
+             wav, zip, exportPieces, blobAssembler, save, renderClient/worker/protocol
   analysis/  stft onset tempo beats bars features ssm sections candidates pipeline config worker client
              harmony seam smooth nearby bridge bridgePlan   (seams, see "How seams are smoothed")
   label/     provider.ts   (LabelProvider interface, no-op default)
@@ -246,7 +337,13 @@ scripts/     make-demo-song.ts
   a song with no steady beat has no harmony score at all (the chip then rests on the other two scores). Smoothing moves a seam by at most a beat and 20 ms; it
   can't make a bad chord change good (the nearby loop and the bridge are for that, and a bridge only jumps between
   bar positions that match).
-- Files over 20 minutes load with a warning; extended output is capped at 60 minutes.
+- Files over 20 minutes load with a warning. The extended song has no length limit of its own; the WAV format
+  does (under 4 GB, so a few hours, depending on bit depth, sample rate and channel count). Inside a claude.ai
+  artifact the saved zip has the same limit. Chromium keeps a download that the page builds as a blob; very large
+  exports need that much free disk (or, in a private window, memory) in the browser, and a browser that refuses the
+  blob ends the export with an error rather than a bad file.
+- Typed loop times are exact in the interface; the renderer still moves an edge by at most 2 ms to the nearest zero
+  crossing.
 - Files with more than two channels are stretched pair by pair when speed or pitch is baked in.
 - Optional AI labelling of sections and saving loops between sessions are not in v1 (`src/label/provider.ts` is
   the extension point for the former).

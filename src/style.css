@@ -475,9 +475,9 @@ kbd {
 
 .numfield {
   display: inline-flex;
+  flex: none;
   flex-direction: column;
   gap: 2px;
-  min-width: 0;
 }
 
 .nf-box {
@@ -750,6 +750,11 @@ input.nf-input:disabled {
   border-radius: 50%;
   background: var(--label-red);
   box-shadow: 0 0 0 1.5px var(--sleeve);
+}
+
+.wave-toolbar .field.grow {
+  display: flex;
+  width: 100%;
 }
 
 .wave-toolbar {
@@ -1603,9 +1608,6 @@ dialog.export-dialog::backdrop {
   }
   .region-main > .region-title {
     grid-column: 2;
-  }
-  .wave-toolbar .numfield {
-    flex: none;
   }
   .wave-toolbar input[type='range'] {
     min-width: 60px;
