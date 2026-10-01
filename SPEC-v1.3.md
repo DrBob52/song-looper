@@ -254,3 +254,59 @@ A calm modern DAW.
 6. Studio hardware and Night club skins.
 7. Space age skin.
 8. Overlap, contrast and fonts-blocked tests across all skins; screenshots; README (cuts, ending, layout, themes); final full run.
+
+---
+
+## 7. Addendum: loop export, selection bar, suggestions placement
+
+These were requested by the user after sections 1–6 were written. Sections 1–6 are built (through commit 90c9ae1). This section is built next, on top of them.
+
+### 7.1 Export a loop as its own audio file
+
+- **The button.** Each loop card gets an **Export loop** button (testid `export-loop`). It opens the export dialog in a "loop" mode with:
+  - bit depth;
+  - **Repeats in the file** (NumberField, 1–9,999, default 1);
+  - **Loop-ready file** (checkbox, default on);
+  - the speed/pitch bake checkbox;
+  - a default file name `<song name> - Loop <n> (<start>-<end>).wav`, with times written `m.ss.mmm`. Colons aren't allowed in file names on Windows.
+- **The span.** The file holds the loop's played span: the Smooth seam plan's rotated span (`loopStart`/`loopEnd`) when there is a plan, otherwise the loop's start and end.
+- **Repeats.** N repeats means N passes with the app's normal seam between passes, rendered by the same renderer code, so the file matches the preview.
+- **Not included:**
+  - **Bridges.** The dialog shows a one-line note when the loop has Bridge on.
+  - **Cuts and the Ending.** They don't apply to loop exports.
+- **Loop-ready file.** The file must loop seamlessly when a DAW, sampler or player repeats it end-to-start.
+  - Crossfade the file's last W samples with `orig[start − W, start)`, the audio just before the loop's start. Use equal-power with the existing adaptive law.
+  - W is the Seam fade setting, with a minimum of 10 ms.
+  - If `start − W < 0`, use what exists and fade the rest.
+- **Path.** It uses the same piece-by-piece export, the WAV cap check, and `src/audio/save.ts` (zipped inside artifacts).
+- **Tests:**
+  - **Unit:** a loop-ready file joined to itself has no sample jump at the join above the seam tests' threshold. The N-repeat file equals the matching span of `renderRange` for a plan with just that loop. File names are sanitised.
+  - **E2E:** export with 1 repeat (loop-ready) and with 4. Durations match, and artifact mode gives a zip.
+
+### 7.2 Selection timestamps, typable
+
+- **The selection bar.** While a selection exists on the waveform (before L or X), show a bar directly under the waveform (testid `selection-bar`) with:
+  - Start and End time fields (NumberField);
+  - Length (read-only, seconds and bars);
+  - buttons **Add as loop** (= L), **Cut** (= X) and **Clear**.
+- **Typing.** Typed values move the selection immediately. They're exact and never snapped, with the same parsing, validation and messages as loop fields. Escape reverts.
+- **I and O.** They set the selection's edges from the playhead when no loop or cut is selected, and the fields update.
+- **Edge labels.** Small mono timestamps at the selection's two edges on the waveform, e.g. `1:09.600`.
+  - They never overlap each other or run off the waveform: flip them inside near the edges.
+  - When the selection is narrow, show one combined label `1:09.600–1:12.000`.
+  - Allow-list them in the overlap test only where they sit over the canvas on purpose.
+- **Hidden** when there is no selection.
+- **Styling.** Styled in every skin, and it passes the overlap and contrast checks.
+- **Tests (E2E):** drag a selection and the bar shows the right times. Type new times and the region moves. Add as loop and Cut use the typed times exactly.
+
+### 7.3 Suggested loops: collapsible, directly under "Your loops"
+
+- **The toggle.** A disclosure toggle in the card header: a button with a chevron and "Suggested loops (12)", with `aria-expanded`/`aria-controls` and testid `suggestions-toggle`.
+  - Collapsed shows only the header.
+  - Default is expanded. The user's choice persists in `localStorage` (try/catch).
+  - During analysis the header reads "Finding loops…", and the toggle still works.
+- **Placement.** It sits directly under "Your loops" in every layout. This replaces the column assignment in 4.2:
+  - **Wide:** main column (3fr) = Your loops, then Suggested loops. Side column (2fr) = Cuts, Ending, Length.
+  - **Narrow order:** waveform, selection bar, Your loops, Suggested loops, Cuts, Ending, Length, extended timeline.
+  - Update the wide-layout and overlap tests.
+- **Unchanged.** Keep every existing suggestion testid and behaviour: Preview, Audition seam, Add, Show the whole side.
