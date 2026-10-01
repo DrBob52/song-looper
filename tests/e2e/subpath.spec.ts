@@ -69,6 +69,13 @@ test('the built site works from a GitHub Pages style sub-path (workers and workl
     await page.waitForSelector('[data-testid=song-panel]:not([hidden])');
     await waitForAnalysis(page); // needs the analysis worker
     expect(await appState<number>(page, 's.analysis.beats.length')).toBeGreaterThan(20);
+    // a loop gets its seam report and smoothing plan from the same worker, and the render worker plays the plan
+    await page.evaluate(() =>
+      (window as unknown as { songLooper: { addLoop(s: { start: number; end: number }): string | null } }).songLooper.addLoop({ start: 0, end: 8 }),
+    );
+    await expect(page.getByTestId('seam-chip').first()).toBeVisible();
+    await expect(page.getByTestId('seam-summary').first()).toBeVisible();
+    expect(await appState<boolean>(page, '!!s.regions[0].seam')).toBe(true);
     // the render worker and the SoundTouch worklet load from relative URLs too
     await page.getByTestId('speed').fill('1.2');
     await page.getByTestId('mode-extended').click();

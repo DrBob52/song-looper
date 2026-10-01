@@ -7,6 +7,10 @@ Everything runs in the browser. There is no server, no API key and nothing is up
 
 ![Song Looper screenshot](docs/screenshot.png)
 
+*A synthetic chord-progression demo. Loop 1 has a bridge, so its seam reads Clean and the extended timeline shows
+the hatched bridge bars. Loop 2 ends one bar early on a chord change the song never makes: Rough, with a cleaner
+loop suggested nearby.*
+
 ## What it does
 
 - Loads mp3, wav, m4a/aac, flac, ogg or anything else your browser's `decodeAudioData` accepts, and keeps the
@@ -22,6 +26,9 @@ Everything runs in the browser. There is no server, no API key and nothing is up
 - Each loop has its own repeat count (1 to 64). Or set a target length and let the app choose repeat counts.
 - Previews the original or the extended song, a loop on repeat, or just the seam (the jump from a loop's end back
   to its start) through the same crossfade code the export uses.
+- Smooths the seam of every loop so the join sounds like part of the song, and says how it went with a Clean / OK /
+  Rough chip. Optionally bridges a rough seam with a few bars of the song. See
+  [How seams are smoothed](#how-seams-are-smoothed).
 - Speed (0.5x to 1.5x, tempo only) and pitch (-12 to +12 semitones) for preview, optionally baked into the export.
 - Exports 16-bit or 24-bit PCM or 32-bit float WAV.
 
@@ -62,11 +69,17 @@ npm run demo-song    # writes tests/fixtures/demo-song.generated.wav (git-ignore
   100/120/140 BPM (tempo within +-1 BPM, beats within 30 ms), a synthetic A B A B C A song (the top candidate must
   start and end on the A/B boundaries and an A or A+B loop must be in the top 3), other structures and tempos, 3/4,
   the timeline and render maths, seam crossfade continuity, zero-crossing snapping, the target-length solver, the
-  WAV encoder, sample-rate sniffing and the offline SoundTouch stretch.
+  WAV encoder, sample-rate sniffing and the offline SoundTouch stretch. The seam work is tested on songs built
+  from named chord progressions (one chord per bar over a kick, also in `synth.ts`): the harmony of the same loop
+  with and without the chord change in the song, suggestions, rotation (length unchanged, never more than a beat,
+  lands before a hit), micro-alignment (a +15 ms edge recovered within 2 ms, one onset in the seam window), the fade
+  limit at poor harmony, the level step after a 3 dB crescendo, bridge search, render length and target solver, Undo,
+  and how stale seam data is dropped when the tempo, meter or bar lines change.
 - **End to end (Playwright, Chromium)**: load a generated WAV, select a span, add a loop, repeat it, export,
   and check the downloaded WAV's header and duration (and decode it with `decodeAudioData`); suggestions, preview,
   seam audition, snapping, target-length mode, the timeline strip, live speed/pitch (through the real AudioWorklet),
-  baked export, error and edge cases, a 380 px layout check in light and dark mode, and serving the built site
+  baked export, the seam chip, Undo, nearby loops, bridges (chip, hatched strip, export length), error and edge
+  cases, a 380 px layout check in light and dark mode, saving as a claude.ai artifact, and serving the built site
   from a GitHub Pages style sub-path.
 
 Playwright is pinned to 1.56.x so that its Chromium revision matches the browser pre-installed in this
@@ -87,8 +100,10 @@ The workflow can also be run by hand from the Actions tab.
 
 The same build also runs as a claude.ai artifact. A page there can't start downloads itself, so
 `src/audio/save.ts` asks the host through `claude.use("downloads")`. That save dialog accepts `.zip` but not
-`.wav`, so inside an artifact the export arrives as a zip holding the WAV. Everywhere else it's a plain WAV
-download.
+`.wav`, so inside an artifact the export arrives as a zip holding the WAV (a loop with seam smoothing and a bridge
+included). Everywhere else it's a plain WAV download. The build is one `index.html` plus files under `assets/`, all
+referenced by relative URLs (`base: './'`): the analysis worker (which also does the seam work), the render worker,
+the SoundTouch worklet and the lazily loaded AAC decoder. The seam features added no extra files or dependencies.
 
 ## How loop suggestions work
 
@@ -113,10 +128,11 @@ threshold lives in `src/analysis/config.ts`.
    geometric mean), prominent peaks snapped to bar lines, then agglomerative clustering labels them A, B, C in
    order of first appearance. The label that repeats most gets a cautious "likely chorus" hint.
 9. **Candidates**: every bar-aligned pair `(a, b)` of 2 to 32 bars (at least 4 s, at most half the song) is scored
-   0.5 x seam match + 0.25 x structure + 0.15 x energy continuity + 0.10 x length preference. The seam score is the
-   mean of `S[a+j][b+j]` for `j` in `[-4, 4)`: does the music around `b` sound like the music around `a`, so that
-   jumping from `b` back to `a` is what the song itself does at `a`? Overlapping near-duplicates are suppressed and
-   the top 12 are kept, each with a reason such as "Seam match 100%, sections B+A".
+   0.5 x seam + 0.25 x structure + 0.15 x energy continuity + 0.10 x length preference. The seam is half
+   *context match* and half *harmony*. Context match is the better of two means over four beats: `S[a-1-j][b-1-j]`
+   (the lead-ins match) and `S[a+j][b+j]` (the continuations match). Harmony asks whether the song itself makes the
+   chord change from the beat before `b` to the beat at `a` (see [How seams are smoothed](#how-seams-are-smoothed)). Overlapping near-duplicates are suppressed
+   and the top 12 are kept, each with a reason such as "Seam match 100%, chords lead back cleanly, sections B+A".
 
 ### Splicing
 
@@ -124,8 +140,9 @@ threshold lives in `src/analysis/config.ts`.
 sample by sample. Loop edges first snap to the nearest zero crossing (+-2 ms, on the mid channel, both channels
 moved together). Each jump from a loop's end back to its start gets an equal-power crossfade (20 ms by default,
 "Seam smoothing" under Advanced), which blends toward equal-gain when the two sides are highly correlated, because
-a pure equal-power fade of two identical signals would swell by 3 dB. Preview and export use the same renderer,
-so what you hear is what you get.
+a pure equal-power fade of two identical signals would swell by 3 dB. A loop with **Smooth seam** on (the default)
+picks its own fade length instead, as described below, and the "Seam smoothing" length applies to loops with it off.
+Preview and export use the same renderer, so what you hear is what you get.
 
 ### Speed and pitch
 
@@ -134,6 +151,74 @@ source's `playbackRate` and the worklet compensates pitch). The node is only in 
 pitch is not neutral. Exporting with "Apply speed and pitch changes" ticked processes the rendered channels with
 `@soundtouchjs/core` inside the render worker (a WSOLA stretch stage plus the rate transposer), with progress.
 
+## How seams are smoothed
+
+A loop sounds seamless when the end leads back into the start the way the song itself would. A crossfade can't give
+you that: it blends two sounds, so when the chords on either side of the seam clash, a longer fade only lets you
+hear both chords at once. The app therefore works on **where** the seam is, and uses the fade only for timing and
+timbre. Everything is signal processing on data the analysis worker already has. There is no AI model and no
+generated audio, and none of it needs a server.
+
+**Does the song make this chord change?** The song shows which chord changes sound natural. Per beat the app has a
+12-note chroma vector (which notes are sounding). A jump from beat `x` (the last beat played) to beat `y` (the next
+one) is natural if somewhere in the song, two beats that sound like the ones before `x` are followed by two beats
+that sound like the ones from `y`. The score is the mean of the two best such places that are at least a bar apart
+(a place that matches almost exactly stands on its own, so a chord change the song makes once still counts). The
+number is then measured against the song's own random jumps: the median jump scores 0 and the 95th percentile
+scores 1, so a song that sits on one chord doesn't make everything look natural. A song with no spread at all
+scores every seam 1 and lets the other two scores decide. Take a song that plays C G Am F, Dm Em F G, then both
+again, one chord per bar. A loop of the first four bars ends on F and returns to C, F to C never happens in the
+song, and the loop scores 0. A loop of all eight bars ends on G and returns to C, G to C happens (where the second
+round starts), and it scores 1.
+
+**The Seam chip.** Each loop's seam gets three scores: how well it hides in front of a drum hit, how close the
+spectrum across the seam is to the song's own at that point in the bar, and the harmony above. Quality is 0.25 hit
++ 0.25 spectrum + 0.5 harmony, because the chord is what you hear. 70% or more reads **Clean**, 55% or more
+**OK**, anything below **Rough**. The tooltip shows the numbers before and after smoothing. Without a steady beat
+there is no harmony score and the chip comes from the other two.
+
+**Smooth seam** (a checkbox on each loop, on by default) does four things. The loop's own start and end stay
+exactly where you put them; the app only changes how the jump is played, so it can show what it did and **Undo**
+is exact.
+
+1. *Rotation.* Both edges shift together by up to a beat either way, so the loop keeps its exact length and the
+   groove doesn't change. Quarter-beat positions are tried, the two best are refined in 5 ms steps within 30 ms,
+   and each is scored on a hit just after the seam (0.4), spectral continuity (0.4) and harmony (0.2), with a small
+   cost for moving. A seam that is already fine stays where it is. The edges never leave the free space around the
+   loop.
+2. *Micro-alignment.* The end edge alone moves by at most 20 ms, to where the fine onset curves around the two
+   edges line up best (the waveform when neither has a hit). This fixes a drum hit that would land twice.
+3. *Adaptive fade.* The seam is rendered with 10, 20, 40, 80, 160 ms and one-beat fades, and the shortest one
+   whose spectral discontinuity is close to the best wins. When the chord change is not natural (harmony below 0.5)
+   only fades of 40 ms or less are allowed.
+4. *Level match.* If the last beat and the first beat differ by more than 1.5 dB beyond the song's own accent
+   pattern, the last beat of the loop ramps linearly to meet the first. It only applies to repeats that jump back;
+   the last pass into the rest of the song is untouched.
+
+The loop row shows a one-line summary such as `Seam moved +61 ms · aligned +7 ms · fade 40 ms`, **Undo** (which
+restores the original seam and turns smoothing off for that loop), **Audition seam** (plays the smoothed seam) and
+**Hear original** (plays the raw seam for comparison).
+
+**Cleaner chord change nearby.** When a loop's harmony is under 0.5, the app looks for a loop whose start is within
+a bar of yours, whose end is within two bars, and that is a whole number of bars long, and picks the one with the
+best harmony (the suggestion score breaks ties). It is only offered if it scores at least 0.7 and is clearly better.
+The loop row shows it with **Audition** and **Use**. Nothing moves until you click.
+
+**Bridge** (a checkbox on each loop, off by default). When no jump from the loop's end back to its start sounds
+natural, the loop can play a few bars of the song after its end and jump back from a place where the song does make
+that chord change. The app searches for a path that starts at the loop's last beat and comes back to its first, plays
+1 to 4 whole bars beyond the loop and jumps at most twice. A jump has to be one the song makes (harmony 0.5 or more)
+and has to land at the same place in the bar as the beat it replaces. The simplest path, carrying on into the song and
+jumping back at the bar line where the chord change occurs, is always among the ones considered, and the song's own
+continuation wins ties. A bridge is only offered when its weakest jump is at least 0.2 better than the direct seam;
+otherwise the row says `No natural bridge found` or `No bridge needed`. Every repeat except the last plays the loop
+and then the bridge, every jump in it gets the same smoothing as a plain seam, and the last repeat flows into the rest
+of the song as usual. The timeline, the extended length, the target-length solver, the extended timeline strip (bridges
+are hatched in the loop's colour), seam audition, loop preview and export all include it.
+
+Seams that read Rough show a "Seam sounds rough? Try Bridge" hint. Stem separation (giving drums, bass and vocals
+each their own seam) is not part of this version.
+
 ## Project layout
 
 ```
@@ -141,9 +226,10 @@ index.html
 src/
   main.ts  app.ts  model.ts  plan.ts  grid.ts
   ui/        dropzone, waveform, suggestionsPanel, regionsPanel, lengthPanel, timelineStrip, transport,
-             exportDialog, analysisControls
-  audio/     decode (+ sniff), player, render, preview, target, stretch, wav, renderClient/worker
+             exportDialog, analysisControls, seamText
+  audio/     decode (+ sniff), player, render, preview, target, stretch, wav, save, renderClient/worker
   analysis/  stft onset tempo beats bars features ssm sections candidates pipeline config worker client
+             harmony seam smooth nearby bridge bridgePlan   (seams, see "How seams are smoothed")
   label/     provider.ts   (LabelProvider interface, no-op default)
 tests/       unit/  e2e/  fixtures/
 scripts/     make-demo-song.ts
@@ -155,6 +241,11 @@ scripts/     make-demo-song.ts
 - Beat and structure analysis is heuristic. Expect octave (half/double) tempo errors on some songs, which the
   tempo menu fixes, and approximate section boundaries on real recordings. Ambient or rubato music gets a
   "No steady beat found" warning and a fixed 0.5 s snapping grid.
+- The harmony score comes from the song's own chroma, not from recognising chords, so it only knows chord changes
+  that the song itself makes. A song that never repeats a chord change gives every seam a poor score, and a seam in
+  a song with no steady beat has no harmony score at all (the chip then rests on the other two scores). Smoothing moves a seam by at most a beat and 20 ms; it
+  can't make a bad chord change good (the nearby loop and the bridge are for that, and a bridge only jumps between
+  bar positions that match).
 - Files over 20 minutes load with a warning; extended output is capped at 60 minutes.
 - Files with more than two channels are stretched pair by pair when speed or pitch is baked in.
 - Optional AI labelling of sections and saving loops between sessions are not in v1 (`src/label/provider.ts` is
