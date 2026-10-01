@@ -18,7 +18,9 @@ import {
   renderedLength,
 } from './audio/render';
 import { exportFrames, wavTooLong } from './audio/exportPieces';
-import { ExportCancelledError, RenderClient, SupersededError } from './audio/renderClient';
+import { WorkerChunkSource } from './audio/chunkSource';
+import { ChunkStream, STREAM_DEFAULTS } from './audio/stream';
+import { ExportCancelledError, RenderClient } from './audio/renderClient';
 import { noopLabelProvider } from './label/provider';
 import type { LabelProvider } from './label/provider';
 import { isNeutral } from './audio/stretch';
@@ -1157,7 +1159,7 @@ export class App {
       return;
     }
     if (playMode === 'extended' && this.extendedKey === null) {
-      const ok = await this.renderExtendedPreview();
+      const ok = await this.ensureExtendedStream();
       if (!ok) return;
     }
     await this.player.play();
@@ -1180,6 +1182,7 @@ export class App {
     if (mode === 'original') {
       const orig = extendedToOriginal(this.timeline, t).time;
       window.clearTimeout(this.renderTimer);
+      this.extendedKey = null;
       this.store.set({ playMode: 'original' });
       this.player.setBuffer(song.buffer);
       this.player.seek(orig);
@@ -1187,7 +1190,8 @@ export class App {
     } else {
       const origT = t;
       this.store.set({ playMode: 'extended' });
-      const ok = await this.renderExtendedPreview();
+      this.extendedKey = null;
+      const ok = await this.ensureExtendedStream(false);
       if (!ok) return;
       this.player.seek(originalToExtended(this.timeline, origT));
       if (wasPlaying) await this.player.play();
@@ -1197,37 +1201,29 @@ export class App {
 
   private scheduleRender(): void {
     window.clearTimeout(this.renderTimer);
-    this.renderTimer = window.setTimeout(() => void this.renderExtendedPreview(), RENDER_CONFIG.renderDebounceMs);
+    this.renderTimer = window.setTimeout(() => void this.ensureExtendedStream(true), RENDER_CONFIG.renderDebounceMs);
   }
 
-  /** Render the extended song in the worker and load it into the player. */
-  private async renderExtendedPreview(): Promise<boolean> {
+  /**
+   * Point the player at the extended song of the current plan. It is not rendered up front: the render worker makes
+   * the next few seconds of it (`renderRange`, the same code as the export) while it plays, so any length works.
+   * After a change to the plan, `keepPosition` (the default) carries on from the same place in the new cut.
+   */
+  private async ensureExtendedStream(keepPosition = true): Promise<boolean> {
     const { song, seamMs } = this.store.get();
     if (!song) return false;
     const plan = this.plan();
     const key = planKey(plan, song.duration, seamMs);
     if (this.extendedKey === key) return true;
-    if (extendedDuration(plan, song.duration) * song.sampleRate > RENDER_CONFIG.maxInMemoryFrames / 2) {
-      this.store.set({ renderState: 'error' });
-      this.notify('The extended song is too long to preview here. Lower a repeat count to hear it; export has no such limit.');
-      return false;
-    }
-    this.store.set({ renderState: 'rendering' });
     try {
-      const { channels, sampleRate } = await this.renderClient.render(plan, seamMs);
-      if (this.store.get().playMode !== 'extended') {
-        this.store.set({ renderState: 'idle' });
-        return false;
-      }
-      const wasPlaying = this.player.isPlaying();
-      this.player.setChannels(channels, sampleRate, true);
-      if (wasPlaying && !this.player.isPlaying()) await this.player.play(undefined);
+      const frames = this.plannedFrames();
+      const source = new WorkerChunkSource(this.renderClient, plan, seamMs, frames, song.sampleRate, song.channels);
       this.extendedKey = key;
       this.timeline = buildTimeline(plan, song.duration);
+      this.player.setStream(source, keepPosition);
       this.store.set({ renderState: 'ready' });
       return true;
     } catch (err) {
-      if (err instanceof SupersededError) return false;
       this.store.set({ renderState: 'error' });
       this.notify(err instanceof Error ? err.message : String(err));
       return false;
@@ -1386,6 +1382,79 @@ export class App {
       if (err instanceof ExportCancelledError) this.exportDialog.setProgress('Export cancelled.', null);
       throw err;
     }
+  }
+
+  // ---- test support ------------------------------------------------------------
+
+  /**
+   * For the end-to-end tests: run the live preview's scheduler (`ChunkStream` over the render worker's chunks) on an
+   * OfflineAudioContext for `seconds` of the extended song from `fromSeconds`, and compare what it plays with the same
+   * span rendered in one piece (`renderRange`). With the context at the song's sample rate and rate 1 the two must be
+   * identical, sample for sample (no gap, no overlap, at any join). With another context rate, both go through the
+   * browser's resampler (the scheduler's chunks, and one source node holding the whole span) and are compared.
+   */
+  async captureExtendedPreview(opts: { fromSeconds: number; seconds: number; contextRate?: number }): Promise<{
+    frames: number;
+    /** Largest difference anywhere, and within 200 samples of a chunk join, and where the first difference is (-1: none). */
+    maxDifference: number;
+    joinDifference: number;
+    firstDifferent: number;
+    peak: number;
+    joins: number;
+  }> {
+    const { song, seamMs } = this.store.get();
+    if (!song) throw new Error('Load a song first.');
+    const plan = this.plan();
+    const sr = song.sampleRate;
+    const source = new WorkerChunkSource(this.renderClient, plan, seamMs, this.plannedFrames(), sr, song.channels);
+    const rate = opts.contextRate ?? sr;
+    const length = Math.round(opts.seconds * rate);
+    const from = Math.round(opts.fromSeconds * sr);
+    const frames = Math.round(opts.seconds * sr);
+    const render = async (fill: (ctx: OfflineAudioContext) => Promise<void>): Promise<Float32Array[]> => {
+      const ctx = new OfflineAudioContext(song.channels, length, rate);
+      await fill(ctx);
+      const out = await ctx.startRendering();
+      return Array.from({ length: song.channels }, (_, c) => out.getChannelData(c).slice());
+    };
+    const played = await render(async (ctx) => {
+      const stream = new ChunkStream(ctx, ctx.destination, source);
+      await stream.start(from, 1, 0);
+      await stream.fill(opts.seconds);
+    });
+    const whole = await this.renderClient.renderChunk(plan, seamMs, from, frames);
+    const reference = await render(async (ctx) => {
+      const buffer = ctx.createBuffer(whole.length, frames, sr);
+      whole.forEach((c, i) => buffer.copyToChannel(c as Float32Array<ArrayBuffer>, i));
+      const node = ctx.createBufferSource();
+      node.buffer = buffer;
+      node.connect(ctx.destination);
+      node.start(0);
+    });
+    // where the chunk joins fall in the capture
+    const chunkFrames = Math.round(STREAM_DEFAULTS.chunkSeconds * sr);
+    const joins: number[] = [];
+    for (let at = (Math.floor(from / chunkFrames) + 1) * chunkFrames; at < from + frames; at += chunkFrames) {
+      joins.push(Math.round(((at - from) / sr) * rate));
+    }
+    let maxDifference = 0;
+    let joinDifference = 0;
+    let firstDifferent = -1;
+    let peak = 0;
+    for (let c = 0; c < played.length; c++) {
+      for (let i = 0; i < length; i++) {
+        const d = Math.abs(played[c]![i]! - reference[c]![i]!);
+        if (d > maxDifference) maxDifference = d;
+        if (d > 0 && firstDifferent < 0) firstDifferent = i;
+        peak = Math.max(peak, Math.abs(played[c]![i]!));
+      }
+      for (const j of joins) {
+        for (let i = Math.max(0, j - 200); i < Math.min(length, j + 200); i++) {
+          joinDifference = Math.max(joinDifference, Math.abs(played[c]![i]! - reference[c]![i]!));
+        }
+      }
+    }
+    return { frames: length, maxDifference, joinDifference, firstDifferent, peak, joins: joins.length };
   }
 
   // ---- ticker ------------------------------------------------------------------

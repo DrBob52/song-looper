@@ -143,11 +143,20 @@ export function extendedDuration(plan: Plan, duration: number): number {
 /** Map a position in the extended output back to the original song. */
 export function extendedToOriginal(timeline: Segment[], t: number): { time: number; segment: Segment | null } {
   if (timeline.length === 0) return { time: 0, segment: null };
-  for (const seg of timeline) {
-    if (t < seg.outEnd) return { time: seg.start + Math.max(0, t - seg.outStart), segment: seg };
+  // segments are in output order: the first one that ends after t (binary search, a long plan has tens of thousands)
+  let lo = 0;
+  let hi = timeline.length - 1;
+  if (!(t < timeline[hi]!.outEnd)) {
+    const last = timeline[hi]!;
+    return { time: last.end, segment: last };
   }
-  const last = timeline[timeline.length - 1]!;
-  return { time: last.end, segment: last };
+  while (lo < hi) {
+    const mid = (lo + hi) >> 1;
+    if (t < timeline[mid]!.outEnd) hi = mid;
+    else lo = mid + 1;
+  }
+  const seg = timeline[lo]!;
+  return { time: seg.start + Math.max(0, t - seg.outStart), segment: seg };
 }
 
 /** Map an original-song time to the extended output (first play of any region). */

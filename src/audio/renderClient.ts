@@ -36,7 +36,7 @@ export interface ExportOutput {
 interface Pending {
   resolve: (value: never) => void;
   reject: (err: Error) => void;
-  kind: 'render' | 'export';
+  kind: 'chunk' | 'export';
   /** Export only. */
   onProgress?: (p: ExportProgress) => void;
   assembler?: BlobAssembler;
@@ -82,8 +82,8 @@ export class RenderClient {
       if (msg.type === 'error') {
         p.assembler?.discard();
         p.reject(new Error(msg.message));
-      } else if (msg.type === 'rendered') {
-        (p.resolve as (v: unknown) => void)({ channels: msg.channels, sampleRate: msg.sampleRate });
+      } else if (msg.type === 'chunk') {
+        (p.resolve as (v: unknown) => void)(msg.channels);
       } else if (msg.type === 'exported') {
         const asm = p.assembler!;
         const header = p.header;
@@ -110,18 +110,12 @@ export class RenderClient {
     this.post({ type: 'setSource', channels, sampleRate: buffer.sampleRate });
   }
 
-  /** Render the whole extended song in memory. A newer call supersedes (rejects) an older pending render. */
-  render(plan: Plan, crossfadeMs: number): Promise<{ channels: Float32Array[]; sampleRate: number }> {
+  /** Frames [start, start + frames) of the extended song, rendered in the worker (the live preview's chunks). */
+  renderChunk(plan: Plan, crossfadeMs: number, start: number, frames: number): Promise<Float32Array[]> {
     const id = this.nextId++;
-    for (const [pid, p] of this.pending) {
-      if (p.kind === 'render' && pid < id) {
-        this.pending.delete(pid);
-        p.reject(new SupersededError());
-      }
-    }
     return new Promise((resolve, reject) => {
-      this.pending.set(id, { resolve: resolve as (v: never) => void, reject, kind: 'render' });
-      this.post({ type: 'render', id, plan, crossfadeMs });
+      this.pending.set(id, { resolve: resolve as (v: never) => void, reject, kind: 'chunk' });
+      this.post({ type: 'chunk', id, plan, crossfadeMs, start, frames });
     });
   }
 

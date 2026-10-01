@@ -10,7 +10,8 @@ export interface StretchParams {
 
 export type WorkerRequest =
   | { type: 'setSource'; channels: Float32Array[]; sampleRate: number }
-  | { type: 'render'; id: number; plan: Plan; crossfadeMs: number }
+  /** Frames [start, start + frames) of the extended song, for the live preview. */
+  | { type: 'chunk'; id: number; plan: Plan; crossfadeMs: number; start: number; frames: number }
   | {
       type: 'export';
       id: number;
@@ -25,7 +26,7 @@ export type WorkerRequest =
   | { type: 'ack'; id: number; bytes: number };
 
 export type WorkerResponse =
-  | { type: 'rendered'; id: number; channels: Float32Array[]; sampleRate: number }
+  | { type: 'chunk'; id: number; channels: Float32Array[]; total: number }
   /** The WAV header, then the pieces of the data, then `exported`. */
   | { type: 'header'; id: number; bytes: ArrayBuffer }
   | { type: 'data'; id: number; bytes: ArrayBuffer }

@@ -1,5 +1,7 @@
 import { SoundTouchNode } from '@soundtouchjs/audio-worklet';
 import processorUrl from '@soundtouchjs/audio-worklet/processor?url';
+import { ChunkStream } from './stream';
+import type { ChunkSource } from './stream';
 
 export interface LoopRange {
   start: number;
@@ -9,14 +11,19 @@ export interface LoopRange {
 export type PlayerEvent = 'play' | 'pause' | 'ended' | 'seek' | 'load';
 
 /**
- * Plays one AudioBuffer at a time (the original song or the rendered extended
- * version) with seek, optional loop range, and one-shot snippet playback for
- * seam auditioning.
+ * Plays one song at a time with seek, optional loop range, and one-shot snippet playback for seam auditioning. The
+ * song is an AudioBuffer (the original) or a `ChunkSource` rendered on demand (the extended cut, which can be hours
+ * long): chunks of a few seconds are scheduled back to back on the same context, all through one SoundTouch node when
+ * speed or pitch is changed.
  */
 export class Player {
   private ctx: AudioContext | null = null;
   private master: GainNode | null = null;
   private buffer: AudioBuffer | null = null;
+  /** The song as chunks rendered on demand, instead of `buffer`. */
+  private stream: ChunkSource | null = null;
+  private chunks: ChunkStream | null = null;
+  private chunkSt: SoundTouchNode | null = null;
   private source: AudioBufferSourceNode | null = null;
   private speed = 1;
   private pitch = 0;
@@ -125,13 +132,18 @@ export class Player {
     // Re-anchor the position clock so the time stays continuous across the rate change.
     const mainPos = this.playing ? this.getTime() : 0;
     const auxPos = this.aux ? this.getAuxTime() : 0;
+    const oldSpeed = this.speed;
     this.speed = Math.min(1.5, Math.max(0.5, speed));
     this.pitch = Math.round(Math.min(12, Math.max(-12, pitch)) * 100) / 100;
     if (!this.neutral || !wasNeutral) {
       if (!this.neutral) await this.ensureWorklet();
     }
     if (this.playing && ctx) {
-      if (wasNeutral !== this.neutral) {
+      if (this.stream) {
+        // chunks already scheduled play at the old rate: a new rate means a new queue from where we are
+        if (wasNeutral !== this.neutral || Math.abs(oldSpeed - this.speed) > 1e-9) void this.play(mainPos);
+        else if (this.chunkSt) this.chunkSt.pitchSemitones.value = this.pitch;
+      } else if (wasNeutral !== this.neutral) {
         void this.play(mainPos);
       } else {
         this.startOffset = mainPos;
@@ -161,6 +173,7 @@ export class Player {
   }
 
   get duration(): number {
+    if (this.stream) return this.stream.totalFrames / this.stream.sampleRate;
     return this.buffer ? this.buffer.duration : 0;
   }
 
@@ -173,6 +186,8 @@ export class Player {
     const wasPlaying = this.playing;
     const pos = keepPosition ? Math.min(this.getTime(), buffer.duration) : 0;
     this.stopSource();
+    this.stopChunks();
+    this.stream = null;
     this.buffer = buffer;
     this.pausedAt = pos;
     this.playing = false;
@@ -189,7 +204,84 @@ export class Player {
     this.setBuffer(buf, keepPosition);
   }
 
+  /**
+   * Play a song rendered on demand in chunks (the extended cut) instead of a buffer. It plays while the render worker
+   * keeps ahead of it, a few seconds at a time, so it can be hours long. Keeps the position if asked.
+   */
+  setStream(source: ChunkSource, keepPosition = false): void {
+    const wasPlaying = this.playing;
+    const pos = keepPosition ? Math.min(this.getTime(), source.totalFrames / source.sampleRate) : 0;
+    this.stopSource();
+    this.stopChunks();
+    this.buffer = null;
+    this.stream = source;
+    this.pausedAt = pos;
+    this.playing = false;
+    this.emit('load');
+    if (wasPlaying && keepPosition) void this.play(pos);
+  }
+
+  private stopChunks(): void {
+    this.chunks?.stop();
+    this.chunks = null;
+    this.chunkSt?.disconnect();
+    this.chunkSt = null;
+  }
+
+  private async playStream(from?: number): Promise<void> {
+    const stream = this.stream;
+    if (!stream) return;
+    const ctx = this.getContext();
+    if (ctx.state === 'suspended') await ctx.resume();
+    if (!this.neutral) await this.ensureWorklet();
+    if (this.stream !== stream) return; // the song was swapped while the context woke up
+    this.stopAux(false);
+    this.stopSource();
+    this.stopChunks();
+    const duration = this.duration;
+    let offset = from ?? this.pausedAt;
+    if (offset >= duration - 0.01) offset = 0;
+    // one SoundTouch node for the whole queue: every chunk source feeds it
+    let st: SoundTouchNode | null = null;
+    if (!this.neutral) {
+      st = new SoundTouchNode({ context: ctx });
+      st.playbackRate.value = this.speed;
+      st.pitchSemitones.value = this.pitch;
+      st.connect(this.master!);
+    }
+    const chunks = new ChunkStream(ctx, st ?? this.master!, stream);
+    chunks.onEnded = () => {
+      if (this.chunks !== chunks) return;
+      this.stopChunks();
+      this.playing = false;
+      this.pausedAt = duration;
+      this.emit('ended');
+    };
+    chunks.onError = (err) => {
+      if (this.chunks !== chunks || err.name === 'SupersededError') return;
+      console.error(err);
+      this.pause();
+    };
+    this.chunks = chunks;
+    this.chunkSt = st;
+    this.rate = this.speed;
+    this.playing = true;
+    this.emit('play');
+    try {
+      await chunks.start(Math.round(offset * stream.sampleRate), this.speed);
+    } catch (err) {
+      if (this.chunks === chunks) {
+        this.pause();
+        if (!(err instanceof Error && err.name === 'SupersededError')) throw err;
+      }
+    }
+  }
+
   getTime(): number {
+    if (this.stream) {
+      if (!this.playing || !this.chunks) return this.pausedAt;
+      return Math.min(this.duration, this.chunks.position() / this.stream.sampleRate);
+    }
     if (!this.buffer) return 0;
     if (!this.playing || !this.ctx) return this.pausedAt;
     let pos = this.startOffset + (this.ctx.currentTime - this.startCtxTime) * this.rate;
@@ -202,6 +294,7 @@ export class Player {
   }
 
   async play(from?: number, loop?: LoopRange | null): Promise<void> {
+    if (this.stream) return this.playStream(from);
     if (!this.buffer) return;
     const ctx = this.getContext();
     if (ctx.state === 'suspended') await ctx.resume();
@@ -241,6 +334,7 @@ export class Player {
     this.pausedAt = this.getTime();
     this.playing = false;
     this.stopSource();
+    this.stopChunks();
     this.emit('pause');
   }
 
@@ -253,6 +347,7 @@ export class Player {
   stop(): void {
     const wasPlaying = this.playing;
     this.stopSource();
+    this.stopChunks();
     this.stopAux(false);
     this.loop = null;
     this.playing = false;
@@ -261,8 +356,8 @@ export class Player {
   }
 
   seek(t: number): void {
-    if (!this.buffer) return;
-    const clamped = Math.max(0, Math.min(this.buffer.duration, t));
+    if (!this.buffer && !this.stream) return;
+    const clamped = Math.max(0, Math.min(this.duration, t));
     if (this.playing) void this.play(clamped);
     else this.pausedAt = clamped;
     this.emit('seek');

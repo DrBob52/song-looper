@@ -1,6 +1,6 @@
 /// Render/export worker: splices the plan, optionally time-stretches/pitch-shifts, and encodes WAV.
 import { ExportCancelled, exportWavPieces } from './exportPieces';
-import { renderExtended } from './render';
+import { RangeRenderer, planKey } from './render';
 import type { WorkerRequest, WorkerResponse } from './renderProtocol';
 import type { AudioBufferLike } from './types';
 import { makeBuffer } from './types';
@@ -12,6 +12,16 @@ interface WorkerScope {
 const scope = self as unknown as WorkerScope;
 
 let source: AudioBufferLike | null = null;
+
+/** The layout of the last plan asked for (zero-crossing snaps, seam plans, fades), so each preview chunk costs only its audio. */
+let cached: { key: string; renderer: RangeRenderer } | null = null;
+function rendererFor(plan: WorkerPlan, crossfadeMs: number): RangeRenderer {
+  if (!source) throw new Error('No source audio loaded in the render worker');
+  const key = planKey(plan, source.duration, crossfadeMs);
+  if (cached?.key !== key) cached = { key, renderer: new RangeRenderer(source, plan, { crossfadeMs }) };
+  return cached.renderer;
+}
+type WorkerPlan = Extract<WorkerRequest, { type: 'chunk' }>['plan'];
 
 /** The export waits when this much data is on its way to the main thread and not yet taken. */
 const MAX_IN_FLIGHT_BYTES = 64 * 1024 * 1024;
@@ -67,6 +77,7 @@ scope.onmessage = (ev) => {
   try {
     if (msg.type === 'setSource') {
       source = makeBuffer(msg.channels, msg.sampleRate);
+      cached = null;
     } else if (msg.type === 'ack') {
       inFlight = Math.max(0, inFlight - msg.bytes);
       if (ackWaiter && inFlight <= MAX_IN_FLIGHT_BYTES) {
@@ -74,13 +85,10 @@ scope.onmessage = (ev) => {
         ackWaiter = null;
         wake();
       }
-    } else if (msg.type === 'render') {
-      if (!source) throw new Error('No source audio loaded in the render worker');
-      const channels = renderExtended(source, msg.plan, { crossfadeMs: msg.crossfadeMs });
-      scope.postMessage(
-        { type: 'rendered', id: msg.id, channels, sampleRate: source.sampleRate },
-        channels.map((c) => c.buffer),
-      );
+    } else if (msg.type === 'chunk') {
+      const renderer = rendererFor(msg.plan, msg.crossfadeMs);
+      const channels = renderer.render(msg.start, msg.frames);
+      scope.postMessage({ type: 'chunk', id: msg.id, channels, total: renderer.total }, channels.map((c) => c.buffer));
     } else if (msg.type === 'export') {
       runExport(msg).catch((err: unknown) => {
         if (err instanceof ExportCancelled) return;

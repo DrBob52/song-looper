@@ -92,6 +92,30 @@ describe('buildTimeline', () => {
   });
 });
 
+describe('extendedToOriginal on a long timeline', () => {
+  it('finds the segment of any time (binary search) exactly as a scan would', () => {
+    const plan = { regions: [region('a', 2, 4, 2500), region('b', 6, 7.5, 1500)] };
+    const tl = buildTimeline(plan, 12);
+    expect(tl.length).toBeGreaterThan(4000);
+    const total = tl[tl.length - 1]!.outEnd;
+    const scan = (t: number) => {
+      for (const seg of tl) if (t < seg.outEnd) return { time: seg.start + Math.max(0, t - seg.outStart), segment: seg };
+      const last = tl[tl.length - 1]!;
+      return { time: last.end, segment: last };
+    };
+    let x = 12345;
+    for (let i = 0; i < 400; i++) {
+      x = (x * 1103515245 + 12345) & 0x7fffffff;
+      const t = (x / 0x7fffffff) * (total + 10) - 1;
+      expect(extendedToOriginal(tl, t), String(t)).toEqual(scan(t));
+    }
+    for (const seg of tl.slice(0, 50)) {
+      expect(extendedToOriginal(tl, seg.outStart)).toEqual(scan(seg.outStart));
+      expect(extendedToOriginal(tl, seg.outEnd)).toEqual(scan(seg.outEnd));
+    }
+  });
+});
+
 describe('renderExtended', () => {
   const sr = 8000;
 

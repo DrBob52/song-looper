@@ -1056,3 +1056,15 @@ input[aria-invalid='true'] {
 .repeats-field .nf-input {
   text-align: center;
 }
+
+/* a loop's whole run of repeats as one block: one band per play, the bridge part lighter */
+.tl-block.run {
+  background-color: var(--loop-color, var(--accent));
+  background-image: repeating-linear-gradient(
+    90deg,
+    transparent 0 calc(var(--loop-part, 100%) - 1px),
+    rgba(255, 255, 255, 0.85) calc(var(--loop-part, 100%) - 1px) var(--loop-part, 100%),
+    rgba(255, 255, 255, 0.35) var(--loop-part, 100%) calc(var(--period, 100%) - 1px),
+    rgba(255, 255, 255, 0.85) calc(var(--period, 100%) - 1px) var(--period, 100%)
+  );
+}

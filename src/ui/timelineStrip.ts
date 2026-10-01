@@ -3,6 +3,9 @@ import type { LoopRegion } from '../model';
 import { formatTime } from '../util/time';
 import { h } from './dom';
 
+/** Above this many segments the strip draws one block per loop instead of one per play. */
+const MAX_BLOCKS = 400;
+
 /**
  * A thin bar showing the extended output: neutral blocks for original audio, coloured blocks for each repeat
  * of a loop. Click to seek the extended preview.
@@ -53,6 +56,10 @@ export class TimelineStrip {
     this.total = segments.length ? segments[segments.length - 1]!.outEnd : 0;
     if (this.total <= 0) return;
     const byId = new Map(regions.map((r, i) => [r.id, { region: r, index: i }]));
+    if (segments.length > MAX_BLOCKS) {
+      this.updateRuns(segments, byId);
+      return;
+    }
     for (const seg of segments) {
       const pct = ((seg.outEnd - seg.outStart) / this.total) * 100;
       const block = h('div', { class: 'tl-block', style: { width: `${pct}%` } });
@@ -73,6 +80,51 @@ export class TimelineStrip {
         block.title = `Original ${formatTime(seg.start, 1)} – ${formatTime(seg.end, 1)}`;
       }
       this.bar.append(block);
+    }
+  }
+
+  /**
+   * A plan with thousands of repeats has too many segments for one element each (9,999 repeats of a loop with a bridge
+   * is 20,000): each loop's whole run of repeats and bridges becomes one block, painted as a repeating band, one period
+   * per repeat, so the strip still reads like a record's run-out groove.
+   */
+  private updateRuns(segments: Segment[], byId: Map<string, { region: LoopRegion; index: number }>): void {
+    let i = 0;
+    while (i < segments.length) {
+      const seg = segments[i]!;
+      if (seg.kind === 'original' || !seg.regionId) {
+        const block = h('div', { class: 'tl-block', style: { width: `${((seg.outEnd - seg.outStart) / this.total) * 100}%` } });
+        block.title = `Original ${formatTime(seg.start, 1)} \u2013 ${formatTime(seg.end, 1)}`;
+        this.bar.append(block);
+        i++;
+        continue;
+      }
+      // the loop's whole run: its repeats and the bridges between them
+      let j = i;
+      let plays = 0;
+      while (j < segments.length && segments[j]!.regionId === seg.regionId && segments[j]!.kind !== 'original') {
+        if (segments[j]!.kind === 'repeat') plays++;
+        j++;
+      }
+      const first = seg;
+      const last = segments[j - 1]!;
+      const run = last.outEnd - first.outStart;
+      const loopLen = first.outEnd - first.outStart;
+      // one period: the loop, then its bridge (if it has one); the last repeat has no bridge
+      const next = segments.slice(i, j).find((s, k) => k > 0 && s.kind === 'repeat');
+      const period = next ? next.outStart - first.outStart : loopLen;
+      const info = byId.get(seg.regionId);
+      const color = info?.region.color ?? 'var(--accent)';
+      const loopPct = Math.min(100, (loopLen / period) * 100);
+      const periodPct = (period / run) * 100;
+      const block = h('div', { class: 'tl-block repeat run', style: { width: `${(run / this.total) * 100}%` } });
+      block.style.setProperty('--loop-color', color);
+      block.style.setProperty('--period', `${periodPct}%`);
+      block.style.setProperty('--loop-part', `${(loopPct / 100) * periodPct}%`);
+      block.dataset.plays = String(plays);
+      block.title = `Loop ${(info?.index ?? 0) + 1}, ${plays} plays (${formatTime(first.outStart, 1)} \u2013 ${formatTime(last.outEnd, 1)})`;
+      this.bar.append(block);
+      i = j;
     }
   }
 
