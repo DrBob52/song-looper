@@ -93,6 +93,22 @@ for (const look of LOOKS) {
         await settle(page);
         problems.push(...(await auditPage(page, `${look.skin} ${mode} ${width}px loaded, suggestions collapsed`)));
       }
+      // a span selected on the waveform (SPEC-v1.3.md 7.2): the selection bar under it, and the timestamps at its edges
+      // (two when the selection is wide, one combined label when it is narrow)
+      await page.getByTestId('suggestions-toggle').click();
+      for (const [name, span] of [
+        ['wide', { start: 20.2, end: 31.7 }],
+        ['narrow', { start: 52.1, end: 52.9 }],
+      ] as const) {
+        await page.evaluate((sel) => (window as unknown as { songLooper: { store: { set(p: object): void } } }).songLooper.store.set({ selection: sel }), span);
+        await expect(page.getByTestId('selection-bar')).toBeVisible();
+        await expect(page.locator('[data-testid=selection-label]:visible')).toHaveCount(name === 'wide' ? 2 : 1);
+        for (const width of WIDTHS) {
+          await page.setViewportSize({ width, height: 800 });
+          await settle(page);
+          problems.push(...(await auditPage(page, `${look.skin} ${mode} ${width}px loaded, ${name} selection`)));
+        }
+      }
       await context.close();
     }
     expect(problems).toEqual([]);

@@ -65,6 +65,7 @@ import { NumberField, parsePlainNumber } from './ui/numberField';
 import type { LengthMode } from './ui/lengthPanel';
 import { RegionsPanel } from './ui/regionsPanel';
 import type { Edge, EdgeEdit } from './ui/regionsPanel';
+import { SelectionBar } from './ui/selectionBar';
 import { SuggestionsPanel, suggestionKey } from './ui/suggestionsPanel';
 import { TimelineStrip } from './ui/timelineStrip';
 import { Transport } from './ui/transport';
@@ -197,6 +198,7 @@ export class App {
   private dropzone: Dropzone;
   private transport: Transport;
   private regionsPanel: RegionsPanel;
+  private selectionBar: SelectionBar;
   private cutsPanel: CutsPanel;
   private endingPanel: EndingPanel;
   /** The last End at time the user had, so that switching back to End at brings it back. */
@@ -262,6 +264,13 @@ export class App {
         const r = id ? this.store.get().regions.find((x) => x.id === id) : undefined;
         this.waveform?.setHighlight(r ? { start: r.start, end: r.end } : null);
       },
+    });
+    // the selection bar under the waveform (SPEC-v1.3.md 7.2): typed times, length, Add as loop / Cut / Clear
+    this.selectionBar = new SelectionBar({
+      onEdit: (edge, seconds) => this.editSelectionEdge(edge, seconds),
+      onAddLoop: () => this.addLoop(),
+      onCut: () => this.cutSelection(),
+      onClear: () => this.store.set({ selection: null }),
     });
     this.cutsPanel = new CutsPanel({
       onSelect: (id) => this.selectRegion(id),
@@ -346,8 +355,9 @@ export class App {
       toolbar,
       this.analysisControls.el,
       this.waveHost,
+      this.selectionBar.el,
       h('div', { class: 'wave-hint', attrs: { 'data-testid': 'wave-hint' } }, [
-        'Click to seek. Drag on the waveform to select a span, then press ',
+        'Click to seek. Drag on the waveform to select a span (the times appear under it, to type exactly), then press ',
         h('kbd', { text: 'L' }),
         ' to add a loop, or ',
         h('kbd', { text: 'X' }),
@@ -515,6 +525,7 @@ export class App {
     const endingChanged = s.ending !== prev.ending || s.endAtTarget !== prev.endAtTarget || s.endingNotice !== prev.endingNotice;
     if (endingChanged || regionsChanged || cutsChanged || s.song !== prev.song || s.lengthMode !== prev.lengthMode) this.updateEndingPanel();
     if (s.selection !== prev.selection) this.waveform?.setSelection(s.selection);
+    if (s.selection !== prev.selection || s.grid !== prev.grid || s.song !== prev.song) this.updateSelectionBar();
     if (s.playMode !== prev.playMode) this.transport.setMode(s.playMode);
     if (s.notice !== prev.notice) this.noticeEl.textContent = s.notice ?? '';
     if (s.renderState !== prev.renderState) {
@@ -733,6 +744,8 @@ export class App {
     this.waveform = new WaveformView(this.waveHost, peaks, song.duration, {
       onSeek: (t) => this.seekOriginal(t),
       onSelection: (sel) => this.store.set({ selection: sel }),
+      // while a selection is being dragged the bar follows it, before the store has the final span
+      onSelectionLive: (sel) => this.selectionBar.update(sel, { barsOf: (span) => barsBetween(this.store.get().grid, span.start, span.end) }),
       onRegionEdit: (id, start, end) => this.updateRegion(id, { start, end }),
       onCutEdit: (id, start, end) => this.updateCut(id, { start, end }),
       onRegionSelect: (id) => this.selectRegion(id),
@@ -1332,6 +1345,29 @@ export class App {
       return;
     }
     this.store.set({ selection: next });
+  }
+
+  private updateSelectionBar(): void {
+    const { selection, grid } = this.store.get();
+    this.selectionBar.update(selection, { barsOf: (span) => barsBetween(grid, span.start, span.end) });
+  }
+
+  /**
+   * A typed (or stepped) start or end of the waveform selection (SPEC-v1.3.md 7.2): exact, never snapped, with the loop
+   * fields' checks and messages (a selection may overlap a loop or cut: Add as loop and Cut say so when it matters).
+   * Returns the reason when refused, null when applied.
+   */
+  editSelectionEdge(edge: Edge, seconds: number): string | null {
+    const { song, selection } = this.store.get();
+    if (!song) return 'Load a song first.';
+    if (!selection) return 'There is no selection.';
+    const value = roundMs(seconds);
+    const start = edge === 'start' ? value : selection.start;
+    const end = edge === 'end' ? value : selection.end;
+    const refused = checkSpanPoints({ what: 'selection', id: 'selection', start, end, edge, duration: song.duration, regions: [], cuts: [] });
+    if (refused) return refused;
+    if (start !== selection.start || end !== selection.end) this.store.set({ selection: { start, end } });
+    return null;
   }
 
   /** The nearby loop with a cleaner chord change that the seam report found for a loop, if it still applies. */

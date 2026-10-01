@@ -150,6 +150,20 @@ export function audit(): string[] {
       if (r.left < -0.6 || r.right > vw + 0.6) problems.push(`outside the window: ${describe(it)} ${Math.round(r.left)}..${Math.round(r.right)} of ${vw}`);
     }
   }
+  // The timestamps at a selection's edges (SPEC-v1.3.md 7.2) sit on the waveform on purpose, inside its shadow tree where
+  // the scan above does not look, so they are not listed with data-overlap-ok: they are checked here instead. Two of them
+  // never overlap, and none leaves the waveform.
+  const waveHost = document.querySelector('[data-testid=waveform]');
+  const stamps = [...(waveHost?.querySelector(':scope > div')?.shadowRoot?.querySelectorAll('[data-testid=selection-label]') ?? [])].filter(visible);
+  const waveBox = waveHost?.getBoundingClientRect();
+  stamps.forEach((a, i) => {
+    const ra = a.getBoundingClientRect();
+    if (waveBox && (ra.left < waveBox.left - 0.6 || ra.right > waveBox.right + 0.6)) problems.push(`selection timestamp leaves the waveform: ${a.textContent} ${Math.round(ra.left)}..${Math.round(ra.right)} in ${Math.round(waveBox.left)}..${Math.round(waveBox.right)}`);
+    for (const b of stamps.slice(i + 1)) {
+      const [ox, oy] = overlap(ra, b.getBoundingClientRect());
+      if (ox > 0 && oy > 0) problems.push(`selection timestamps overlap: ${a.textContent}  and  ${b.textContent}`);
+    }
+  });
   // a typed value clipped by its own box
   for (const el of all) {
     if (el instanceof HTMLInputElement && el.type === 'text' && visible(el) && el.scrollWidth > el.clientWidth + 1) {

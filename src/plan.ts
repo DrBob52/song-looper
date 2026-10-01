@@ -127,8 +127,11 @@ export function undoSmoothing(region: LoopRegion): LoopRegion {
 
 /** What `checkSpanPoints` needs to know about the edit. */
 export interface SpanEdit {
-  /** The thing being edited: a loop or a cut. */
-  what: 'loop' | 'cut';
+  /**
+   * The thing being edited: a loop, a cut or the waveform selection (SPEC-v1.3.md 7.2). A selection follows the same rules
+   * as a cut, except that it may overlap anything: refusing that is up to Add as loop and Cut, which say why.
+   */
+  what: 'loop' | 'cut' | 'selection';
   /** Its id (it is not its own neighbour). */
   id: string;
   start: number;
@@ -146,7 +149,7 @@ export interface SpanEdit {
  * shortest length (0.1 s for a loop, 50 ms for a cut). A cut may start at 0 or run to the end of the song.
  */
 export function checkSpanPoints(e: SpanEdit): string | null {
-  const noun = e.what === 'loop' ? 'loop' : 'cut';
+  const noun = e.what;
   const value = e.edge === 'start' ? e.start : e.end;
   if (!Number.isFinite(value)) return 'That is not a time.';
   if (value < 0) return `A ${noun} cannot go before the start of the song (${formatClock(0)}).`;
@@ -156,6 +159,7 @@ export function checkSpanPoints(e: SpanEdit): string | null {
   }
   const min = e.what === 'loop' ? MIN_REGION_SECONDS : MIN_CUT_SECONDS;
   if (e.end - e.start < min - 1e-9) return `A ${noun} must be at least ${min} s long.`;
+  if (e.what === 'selection') return null;
   const hits = (r: Span): boolean => r.start < e.end - 1e-9 && r.end > e.start + 1e-9;
   const loops = sortRegions(e.regions);
   const loop = loops.find((r) => !(e.what === 'loop' && r.id === e.id) && hits(r));

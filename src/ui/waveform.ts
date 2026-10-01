@@ -2,8 +2,10 @@ import WaveSurfer from 'wavesurfer.js';
 import RegionsPlugin from 'wavesurfer.js/plugins/regions';
 import type { Region } from 'wavesurfer.js/plugins/regions';
 import type { Cut, LoopRegion, Span } from '../model';
+import { formatClock } from '../util/time';
 import { cssVar } from './dom';
 import { loopResolved } from './loopColors';
+import { placeSelectionLabels } from './selectionLabels';
 
 export const SELECTION_ID = 'selection';
 export const HIGHLIGHT_ID = 'highlight';
@@ -12,6 +14,8 @@ export interface WaveformCallbacks {
   onSeek(t: number): void;
   /** The user dragged out or edited the selection. */
   onSelection(sel: Span): void;
+  /** The selection is being dragged or resized right now (before it is final): the selection bar follows it live. */
+  onSelectionLive?(sel: Span): void;
   /** A loop region's edges changed (drag finished). */
   onRegionEdit(id: string, start: number, end: number): void;
   /** A cut's edges changed (drag finished). */
@@ -94,6 +98,9 @@ export class WaveformView {
   private selectedId: string | null = null;
   /** A selection the app asked for (I and O keys): its region is created as given, not snapped like a drag. */
   private pendingSelection: Span | null = null;
+  /** The timestamps at the selection's edges (see placeSelectionLabels), made when there is a selection to label. */
+  private labels: { layer: HTMLDivElement; start: HTMLDivElement; end: HTMLDivElement; both: HTMLDivElement } | null = null;
+  private labelled: Span | null = null;
 
   constructor(
     container: HTMLElement,
@@ -122,9 +129,11 @@ export class WaveformView {
     });
 
     this.ws.on('interaction', (t) => this.cb.onSeek(t));
-    this.ws.on('redraw', () => this.updateGridVisibility());
-    this.ws.on('zoom', () => this.updateGridVisibility());
-    this.ws.on('resize', () => this.updateGridVisibility());
+    this.ws.on('redraw', () => this.onLayout());
+    this.ws.on('zoom', () => this.onLayout());
+    this.ws.on('resize', () => this.onLayout());
+    // the timestamps are measured in the page's fonts: place them again once those have loaded
+    void document.fonts?.ready.then(() => this.layoutSelectionLabels());
 
     this.regions.on('region-update', (region, side) => this.onRegionUpdate(region, side));
     this.regions.on('region-updated', (region) => this.onRegionUpdated(region));
@@ -139,6 +148,15 @@ export class WaveformView {
       4,
     );
     this.disposers.push(stopDragSelection);
+
+    // While a selection is being dragged out, wavesurfer only has its element (it is not a region yet and sends no events):
+    // read the element's edges, so that the timestamps and the selection bar follow the mouse
+    const regionsHost = this.ws.getWrapper().querySelector('[part="regions-container"]');
+    if (regionsHost) {
+      const watcher = new MutationObserver(() => this.followDraggedSelection(regionsHost));
+      watcher.observe(regionsHost, { childList: true, subtree: true, attributes: true, attributeFilter: ['style'] });
+      this.disposers.push(() => watcher.disconnect());
+    }
 
     const onKey = (e: KeyboardEvent): void => {
       this.shiftDown = e.shiftKey;
@@ -286,6 +304,87 @@ export class WaveformView {
     this.updateGridVisibility();
   }
 
+  /** The selection that is being dragged out (no region yet, no data-region-id): its span from its element's offsets. */
+  private followDraggedSelection(container: Element): void {
+    const el = container.querySelector<HTMLElement>('[part~="selection"]:not([data-region-id])');
+    if (!el) return;
+    const left = parseFloat(el.style.left);
+    const right = parseFloat(el.style.right);
+    if (!Number.isFinite(left) || !Number.isFinite(right)) return;
+    const start = (left / 100) * this.duration;
+    const end = ((100 - right) / 100) * this.duration;
+    if (!(end > start)) return;
+    this.showSelectionLabels({ start, end });
+    this.cb.onSelectionLive?.({ start, end });
+  }
+
+  private onLayout(): void {
+    this.updateGridVisibility();
+    this.layoutSelectionLabels();
+  }
+
+  // ---- the selection's timestamps ----------------------------------------------
+
+  private ensureLabels(): NonNullable<WaveformView['labels']> {
+    if (this.labels) return this.labels;
+    const layer = document.createElement('div');
+    layer.setAttribute('aria-hidden', 'true');
+    layer.style.cssText = 'position:absolute;inset:0;pointer-events:none;z-index:6;overflow:hidden;';
+    // inside the waveform's shadow tree the page's stylesheet does not reach, but custom properties do: the look is tokens
+    const mk = (edge: string): HTMLDivElement => {
+      const el = document.createElement('div');
+      el.dataset.testid = 'selection-label';
+      el.dataset.edge = edge;
+      el.style.cssText =
+        'position:absolute;top:var(--sel-label-top,4px);display:none;white-space:nowrap;box-sizing:border-box;padding:1px 6px;' +
+        'font:var(--sel-label-weight,600) 11px/1.35 var(--font-mono,monospace);font-variant-numeric:tabular-nums;letter-spacing:var(--sel-label-spacing,0);' +
+        'color:var(--sel-label-ink,var(--ink,#1d1915));background:var(--sel-label-bg,var(--sleeve,#f8f2e7));' +
+        'border:1px solid var(--sel-label-line,var(--ink,#1d1915));border-radius:var(--sel-label-radius,3px);box-shadow:var(--sel-label-shadow,none);text-shadow:var(--sel-label-text-shadow,none);';
+      layer.appendChild(el);
+      return el;
+    };
+    this.labels = { layer, start: mk('start'), end: mk('end'), both: mk('both') };
+    this.ws.getWrapper().appendChild(layer);
+    return this.labels;
+  }
+
+  /** Put timestamps (m:ss.mmm) at the edges of `span`, or take them away (null). */
+  showSelectionLabels(span: Span | null): void {
+    this.labelled = span ? { start: span.start, end: span.end } : null;
+    if (!span && !this.labels) return;
+    this.ensureLabels();
+    this.layoutSelectionLabels();
+  }
+
+  private layoutSelectionLabels(): void {
+    const l = this.labels;
+    if (!l) return;
+    const span = this.labelled;
+    const width = this.ws.getWrapper().clientWidth;
+    if (!span || !width || !this.duration) {
+      for (const el of [l.start, l.end, l.both]) el.style.display = 'none';
+      return;
+    }
+    const a = formatClock(span.start);
+    const b = formatClock(span.end);
+    l.start.textContent = a;
+    l.end.textContent = b;
+    l.both.textContent = `${a}\u2013${b}`;
+    for (const el of [l.start, l.end, l.both]) el.style.display = '';
+    const x0 = (span.start / this.duration) * width;
+    const x1 = (span.end / this.duration) * width;
+    const spot = placeSelectionLabels(x0, x1, width, { start: l.start.offsetWidth, end: l.end.offsetWidth, both: l.both.offsetWidth });
+    if (spot.kind === 'both') {
+      l.start.style.display = 'none';
+      l.end.style.display = 'none';
+      l.both.style.left = `${spot.left}px`;
+    } else {
+      l.both.style.display = 'none';
+      l.start.style.left = `${spot.start}px`;
+      l.end.style.left = `${spot.end}px`;
+    }
+  }
+
   private updateGridVisibility(): void {
     const w = this.ws.getWrapper().clientWidth;
     if (!w || !this.duration) return;
@@ -391,8 +490,10 @@ export class WaveformView {
     if (!sel) {
       existing?.remove();
       this.tracks.delete(SELECTION_ID);
+      this.showSelectionLabels(null);
       return;
     }
+    this.showSelectionLabels(sel);
     if (existing) existing.setOptions({ start: sel.start, end: sel.end });
     else {
       this.pendingSelection = sel;
@@ -467,6 +568,7 @@ export class WaveformView {
       region.element.dataset.regionId = SELECTION_ID;
     }
     this.tracks.set(SELECTION_ID, { lastStart: start, lastEnd: end, rawStart: start, rawEnd: end });
+    this.showSelectionLabels({ start, end });
     this.cb.onSelection({ start, end });
   }
 
@@ -528,6 +630,11 @@ export class WaveformView {
     if (start !== region.start || end !== region.end) region.setOptions({ start, end });
     track.lastStart = start;
     track.lastEnd = end;
+    // the selection's timestamps and the selection bar follow the drag live
+    if (region.id === SELECTION_ID) {
+      this.showSelectionLabels({ start, end });
+      this.cb.onSelectionLive?.({ start, end });
+    }
   }
 
   private onRegionUpdated(region: Region): void {
@@ -539,7 +646,10 @@ export class WaveformView {
       track.lastStart = region.start;
       track.lastEnd = region.end;
     }
-    if (region.id === SELECTION_ID) this.cb.onSelection({ start: region.start, end: region.end });
+    if (region.id === SELECTION_ID) {
+      this.showSelectionLabels({ start: region.start, end: region.end });
+      this.cb.onSelection({ start: region.start, end: region.end });
+    }
     else if (this.model.has(region.id)) this.cb.onRegionEdit(region.id, region.start, region.end);
     else if (this.cutModel.has(region.id)) this.cb.onCutEdit(region.id, region.start, region.end);
   }
