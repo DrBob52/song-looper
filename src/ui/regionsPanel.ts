@@ -5,7 +5,8 @@ import { currentSeam } from '../audio/path';
 import { isSmooth } from '../plan';
 import { formatClock, formatTime, parseClock, roundMs } from '../util/time';
 import { h } from './dom';
-import { NumberField } from './numberField';
+import { holdRepeat } from './holdRepeat';
+import { NumberField, parsePlainNumber } from './numberField';
 import { chipLabel, chipTitle, seamSummary } from './seamText';
 
 /** One way of moving a loop's start or end to an exact time. */
@@ -74,11 +75,12 @@ interface Row {
   beatButtons: HTMLButtonElement[];
   meta: HTMLElement;
   exactNotice: HTMLElement;
-  repeats: HTMLInputElement;
+  repeats: NumberField;
   dec: HTMLButtonElement;
   inc: HTMLButtonElement;
   snap: HTMLInputElement;
   loopBtn: HTMLButtonElement;
+  loopLabel: HTMLElement;
   seam: HTMLElement;
   chip: HTMLElement;
   smooth: HTMLInputElement;
@@ -153,11 +155,10 @@ export class RegionsPanel {
       const bars = info.barsOf(region);
       row.meta.textContent = `Length ${len.toFixed(3)} s${bars !== null ? ` · ${formatBars(bars)}` : ''}`;
       row.exactNotice.hidden = !(region.exact === true && region.smooth === false);
-      if (document.activeElement !== row.repeats) row.repeats.value = String(region.repeats);
-      row.repeats.disabled = info.repeatsLocked;
+      row.repeats.setValue(region.repeats);
+      row.repeats.setDisabled(info.repeatsLocked, 'Set by the target length');
       row.dec.disabled = info.repeatsLocked;
       row.inc.disabled = info.repeatsLocked;
-      row.repeats.title = info.repeatsLocked ? 'Set by the target length' : '';
       row.snap.checked = region.snapToBars !== false;
       row.snap.disabled = !info.hasGrid;
       row.snap.title = info.hasGrid ? 'Snap edges to bars (off: snap to beats). Shift-drag to ignore.' : 'Snapping needs beat analysis';
@@ -198,8 +199,10 @@ export class RegionsPanel {
         row.nearbyText.textContent = `Cleaner chord change nearby: ${formatTime(nearby.start, 1)}\u2013${formatTime(nearby.end, 1)} (${formatBars(nearby.bars)})`;
       }
       const previewing = info.previewingId === region.id;
-      row.loopBtn.textContent = previewing ? 'Stop' : 'Loop';
+      row.loopLabel.textContent = previewing ? 'Stop' : 'Loop';
       row.loopBtn.classList.toggle('active', previewing);
+      row.loopBtn.setAttribute('aria-pressed', String(previewing));
+      row.loopBtn.title = previewing ? 'Stop the loop' : 'Hear this loop repeating';
     });
   }
 
@@ -273,44 +276,59 @@ export class RegionsPanel {
     };
     const startEdge = edge('start', 'Start');
     const endEdge = edge('end', 'End');
-    const repeats = h('input', {
-      attrs: { type: 'number', min: 1, max: MAX_REPEATS, step: 1, 'aria-label': 'Repeat count', 'data-testid': 'repeats' },
-      class: 'num',
+    const repeats: NumberField = new NumberField({
+      id: `loop-${id}-repeats`,
+      label: 'Repeat count',
+      testId: 'repeats',
+      value: 1,
+      format: (v) => String(v),
+      parse: (text) => {
+        const n = parsePlainNumber(text);
+        return n === null || !Number.isInteger(n) ? 'Enter a whole number.' : n;
+      },
+      step: 1,
+      min: 1,
+      max: MAX_REPEATS,
+      width: 5,
+      inputMode: 'numeric',
+      className: 'repeats-field',
+      onCommit: (n) => this.cb.onRepeats(id, n),
     });
-    const commit = (): void => {
-      const n = Math.round(Number(repeats.value));
-      if (Number.isFinite(n)) this.cb.onRepeats(id, Math.min(MAX_REPEATS, Math.max(1, n)));
-    };
-    repeats.addEventListener('change', commit);
-    repeats.addEventListener('keydown', (e) => {
-      if (e.key === 'Enter') commit();
-    });
+    // - and + step by one; holding a button repeats, and speeds up the longer it is held
     const step = (d: number): void => {
-      const n = Math.round(Number(repeats.value)) || 1;
-      this.cb.onRepeats(id, Math.min(MAX_REPEATS, Math.max(1, n + d)));
+      this.cb.onRepeats(id, Math.min(MAX_REPEATS, Math.max(1, repeats.current + d)));
     };
     const dec = h('button', {
       class: 'btn sm icon',
-      text: '−',
+      text: '\u2212',
       attrs: { type: 'button', 'aria-label': 'Fewer repeats', 'data-testid': 'repeats-dec' },
-      on: { click: () => step(-1) },
     });
     const inc = h('button', {
       class: 'btn sm icon',
       text: '+',
       attrs: { type: 'button', 'aria-label': 'More repeats', 'data-testid': 'repeats-inc' },
-      on: { click: () => step(1) },
     });
+    holdRepeat(dec, (size) => step(-size));
+    holdRepeat(inc, (size) => step(size));
     const snap = h('input', {
       attrs: { type: 'checkbox', 'data-testid': 'snap-toggle' },
       on: { change: () => this.cb.onSnapToggle(id, snap.checked) },
     });
-    const loopBtn = h('button', {
-      class: 'btn sm',
-      text: 'Loop',
-      attrs: { type: 'button', 'data-testid': 'loop-preview', title: 'Hear this loop repeating' },
-      on: { click: () => this.cb.onPreviewLoop(id) },
-    });
+    const loopLabel = h('span', { class: 'sr-only', text: 'Loop' });
+    const loopBtn = h(
+      'button',
+      {
+        class: 'loop-play',
+        attrs: { type: 'button', 'data-testid': 'loop-preview', title: 'Hear this loop repeating', 'aria-pressed': 'false' },
+        on: {
+          click: (e) => {
+            e.stopPropagation();
+            this.cb.onPreviewLoop(id);
+          },
+        },
+      },
+      [h('span', { class: 'play-glyph', attrs: { 'aria-hidden': 'true' } }), loopLabel],
+    );
     const seamBtn = h('button', {
       class: 'btn sm',
       text: 'Audition seam',
@@ -392,11 +410,11 @@ export class RegionsPanel {
       [
         swatch,
         h('div', { class: 'region-main' }, [
-          h('div', { class: 'region-title' }, [title, seam]),
+          h('div', { class: 'region-title' }, [loopBtn, title, seam]),
           h('div', { class: 'region-times' }, [startEdge.el, endEdge.el, meta]),
           exactNotice,
           h('div', { class: 'region-controls' }, [
-            h('span', { class: 'field' }, [h('span', { text: 'Repeats' }), dec, repeats, inc]),
+            h('span', { class: 'field' }, [h('span', { text: 'Repeats' }), dec, repeats.el, inc]),
             h('label', { class: 'field' }, [snap, h('span', { text: 'Snap to bars' })]),
             h('label', { class: 'field', attrs: { title: 'Move the seam by up to a beat, line up the end, pick the fade and match levels' } }, [
               smooth,
@@ -411,7 +429,6 @@ export class RegionsPanel {
               [bridge, h('span', { text: 'Bridge' })],
             ),
             h('span', { class: 'spacer' }),
-            loopBtn,
             seamBtn,
             originalBtn,
             removeBtn,
@@ -423,7 +440,7 @@ export class RegionsPanel {
         ]),
       ],
     );
-    return { el, swatch, title, start: startEdge.field, end: endEdge.field, beatButtons, meta, exactNotice, repeats, dec, inc, snap, loopBtn, seam, chip, smooth, summary, summaryText, undo, nearby, nearbyText, bridge, bridgeStatus, bridgeHint };
+    return { el, swatch, title, start: startEdge.field, end: endEdge.field, beatButtons, meta, exactNotice, repeats, dec, inc, snap, loopBtn, loopLabel, seam, chip, smooth, summary, summaryText, undo, nearby, nearbyText, bridge, bridgeStatus, bridgeHint };
   }
 }
 

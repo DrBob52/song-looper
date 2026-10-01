@@ -32,17 +32,23 @@ import { Dropzone } from './ui/dropzone';
 import { h } from './ui/dom';
 import { ExportDialog } from './ui/exportDialog';
 import { LengthPanel } from './ui/lengthPanel';
+import { NumberField, parsePlainNumber } from './ui/numberField';
 import type { LengthMode } from './ui/lengthPanel';
 import { RegionsPanel } from './ui/regionsPanel';
 import type { Edge, EdgeEdit } from './ui/regionsPanel';
 import { SuggestionsPanel, suggestionKey } from './ui/suggestionsPanel';
 import { TimelineStrip } from './ui/timelineStrip';
 import { Transport } from './ui/transport';
+import { PITCH_MAX, PITCH_MIN, SPEED_MAX, SPEED_MIN } from './ui/transport';
 import type { PlayMode } from './ui/transport';
 import { SELECTION_ID, WaveformView } from './ui/waveform';
 import { formatChannels, formatRate } from './util/format';
 import { formatClock, formatTime, roundMs } from './util/time';
 import { createStore } from './util/store';
+
+/** The waveform zoom range in pixels per second (0 fits the whole song). */
+const ZOOM_MIN_PX = 10;
+const ZOOM_MAX_PX = 400;
 
 export interface AppState {
   song: DecodedSong | null;
@@ -143,6 +149,8 @@ export class App {
   private lengthPanel: LengthPanel;
   private exportDialog: ExportDialog;
   private songPanel: HTMLElement;
+  private zoomSlider!: HTMLInputElement;
+  private zoomField!: NumberField;
   private waveHost: HTMLElement;
   private noticeEl: HTMLElement;
   private waveform: WaveformView | null = null;
@@ -220,12 +228,35 @@ export class App {
     this.waveHost = h('div', { class: 'wave-host', attrs: { 'data-testid': 'waveform' } });
     this.noticeEl = h('div', { class: 'notice', attrs: { role: 'status', 'data-testid': 'notice' } });
 
-    const zoom = h('input', {
+    this.zoomSlider = h('input', {
       attrs: { type: 'range', min: 0, max: 100, value: 0, 'aria-label': 'Zoom', 'data-testid': 'zoom' },
       on: { input: (e) => this.setZoom(Number((e.target as HTMLInputElement).value)) },
     });
+    this.zoomField = new NumberField({
+      id: 'zoom-input',
+      label: 'Zoom in pixels per second (fit shows the whole song)',
+      testId: 'zoom-input',
+      value: 0,
+      format: (v) => (v === 0 ? 'fit' : String(v)),
+      parse: (text) => {
+        if (text.trim().toLowerCase() === 'fit') return 0;
+        const n = parsePlainNumber(text, ['px/s', 'px']);
+        return n === null ? 'Enter fit, or pixels per second like 80.' : Math.round(n);
+      },
+      step: (v, dir, mult) => {
+        if (v === 0) return dir > 0 ? ZOOM_MIN_PX : 0;
+        const next = v + dir * (mult >= 10 ? 50 : mult < 1 ? 1 : 10);
+        return next < ZOOM_MIN_PX ? (dir < 0 ? 0 : ZOOM_MIN_PX) : next;
+      },
+      min: 0,
+      max: ZOOM_MAX_PX,
+      validate: (v) => (v === 0 || v >= ZOOM_MIN_PX ? null : `Enter fit, or ${ZOOM_MIN_PX} to ${ZOOM_MAX_PX} pixels per second.`),
+      width: 5,
+      suffix: 'px/s',
+      onCommit: (px) => this.setZoomPx(px),
+    });
     const toolbar = h('div', { class: 'wave-toolbar' }, [
-      h('label', { class: 'field grow' }, [h('span', { text: 'Zoom' }), zoom]),
+      h('span', { class: 'field grow' }, [h('label', { text: 'Zoom', attrs: { for: 'zoom-input' } }), this.zoomSlider, this.zoomField.el]),
     ]);
     this.songPanel = h(
       'div',
@@ -401,6 +432,8 @@ export class App {
       note,
       noteKind,
       hasRegions: regions.length > 0,
+      capSeconds: Infinity,
+      capMessage: '',
     });
   }
 
@@ -779,10 +812,10 @@ export class App {
     this.store.set({ regions: next, ...extra });
   }
 
-  /** Preview speed (tempo only, 0.5x to 1.5x) and pitch (-12 to +12 semitones). */
+  /** Preview speed (tempo only, 0.5x to 1.5x, to 0.01) and pitch (-12 to +12 semitones, decimals allowed). */
   setSpeedPitch(speed: number, pitch: number): void {
-    const sp = Math.round(Math.min(1.5, Math.max(0.5, speed)) * 100) / 100;
-    const pt = Math.round(Math.min(12, Math.max(-12, pitch)));
+    const sp = Math.round(Math.min(SPEED_MAX, Math.max(SPEED_MIN, speed)) * 100) / 100;
+    const pt = Math.round(Math.min(PITCH_MAX, Math.max(PITCH_MIN, pitch)) * 100) / 100;
     this.store.set({ speed: sp, pitch: pt });
     this.transport.setSpeedPitch(sp, pt);
     void this.player.setSpeedPitch(sp, pt).catch((err: unknown) => {
@@ -1042,9 +1075,19 @@ export class App {
 
   private setZoom(v: number): void {
     // Slider 0 = fit; otherwise log scale 10..400 px per second.
-    const px = v <= 0 ? 0 : Math.round(10 * Math.pow(40, v / 100));
+    this.applyZoom(v <= 0 ? 0 : Math.round(ZOOM_MIN_PX * Math.pow(ZOOM_MAX_PX / ZOOM_MIN_PX, v / 100)));
+  }
+
+  /** Zoom to an exact number of pixels per second (0 fits the song), as typed in the field. */
+  private setZoomPx(px: number): void {
+    this.applyZoom(px);
+  }
+
+  private applyZoom(px: number): void {
     this.store.set({ zoom: px });
     this.waveform?.setZoom(px);
+    this.zoomField.setValue(px);
+    this.zoomSlider.value = String(px <= 0 ? 0 : Math.round((100 * Math.log(px / ZOOM_MIN_PX)) / Math.log(ZOOM_MAX_PX / ZOOM_MIN_PX)));
   }
 
   // ---- playback ----------------------------------------------------------------

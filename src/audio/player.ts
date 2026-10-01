@@ -126,7 +126,7 @@ export class Player {
     const mainPos = this.playing ? this.getTime() : 0;
     const auxPos = this.aux ? this.getAuxTime() : 0;
     this.speed = Math.min(1.5, Math.max(0.5, speed));
-    this.pitch = Math.round(Math.min(12, Math.max(-12, pitch)));
+    this.pitch = Math.round(Math.min(12, Math.max(-12, pitch)) * 100) / 100;
     if (!this.neutral || !wasNeutral) {
       if (!this.neutral) await this.ensureWorklet();
     }

@@ -1,6 +1,7 @@
 import { RENDER_CONFIG } from '../audio/config';
-import { formatTime, parseTime } from '../util/time';
+import { formatClock, formatTime, parseClock, roundMs } from '../util/time';
 import { h } from './dom';
+import { NumberField, parsePlainNumber } from './numberField';
 
 export type LengthMode = 'repeats' | 'target';
 
@@ -19,6 +20,9 @@ export interface LengthView {
   note: string;
   noteKind: 'info' | 'warn';
   hasRegions: boolean;
+  /** The longest extended song a WAV can hold, in seconds (Infinity: no limit known), and what to say about a longer one. */
+  capSeconds: number;
+  capMessage: string;
 }
 
 /** Original -> extended length, repeat-count vs target-length mode, and the advanced seam smoothing control. */
@@ -28,15 +32,17 @@ export class LengthPanel {
   private extended: HTMLElement;
   private note: HTMLElement;
   private modeInputs: Record<LengthMode, HTMLInputElement>;
-  private targetInput: HTMLInputElement;
+  private target: NumberField;
   private targetRow: HTMLElement;
   private seam: HTMLInputElement;
-  private seamValue: HTMLElement;
+  private seamField: NumberField;
+  private capSeconds = Infinity;
+  private capMessage = '';
 
   constructor(private cb: LengthPanelCallbacks) {
     this.original = h('span', { class: 'mono big', attrs: { 'data-testid': 'length-original' } });
     this.extended = h('span', { class: 'mono big', attrs: { 'data-testid': 'length-extended' } });
-    this.note = h('div', { class: 'small', attrs: { 'data-testid': 'length-note', role: 'status' } });
+    this.note = h('div', { class: 'small', attrs: { id: 'length-note', 'data-testid': 'length-note', role: 'status' } });
 
     const mkMode = (mode: LengthMode, label: string): { input: HTMLInputElement; el: HTMLElement } => {
       const input = h('input', {
@@ -49,21 +55,51 @@ export class LengthPanel {
     const b = mkMode('target', 'Target length');
     this.modeInputs = { repeats: a.input, target: b.input };
 
-    this.targetInput = h('input', {
-      class: 'num wide',
-      attrs: { type: 'text', inputmode: 'numeric', placeholder: 'mm:ss', 'aria-label': 'Target length (mm:ss)', 'data-testid': 'target-input' },
-      on: {
-        change: () => this.commitTarget(),
-        keydown: (e) => {
-          if (e.key === 'Enter') this.commitTarget();
-        },
+    this.target = new NumberField({
+      id: 'target-length',
+      label: 'Target length (h:mm:ss or m:ss)',
+      testId: 'target-input',
+      value: 0,
+      format: (v) => formatClock(v, 0),
+      parse: (text) => {
+        const v = parseClock(text);
+        if (v === null) return 'Enter a length like 3:30 or 1:05:00.';
+        return v <= 0 ? 'The target must be longer than zero.' : roundMs(v);
       },
+      // one second per press (Shift: ten seconds)
+      step: (v, dir, mult) => Math.max(1, Math.round(v) + dir * (mult >= 10 ? 10 : 1)),
+      width: 8,
+      inputMode: 'text',
+      placeholder: 'm:ss',
+      validate: (v) => (v > this.capSeconds ? this.capMessage : null),
+      onCommit: (seconds) => this.cb.onTarget(seconds),
     });
     this.targetRow = h('div', { class: 'row' }, [
-      h('label', { class: 'field' }, [h('span', { text: 'Target' }), this.targetInput]),
+      h('label', { class: 'field', attrs: { for: 'target-length' } }, [h('span', { text: 'Target' })]),
+      this.target.el,
       h('span', { class: 'muted small', text: 'The app picks repeat counts and rounds to whole repeats.' }),
     ]);
 
+    this.seamField = new NumberField({
+      id: 'seam-smoothing-input',
+      label: 'Seam smoothing in milliseconds',
+      testId: 'seam-smoothing-input',
+      value: RENDER_CONFIG.crossfadeMs,
+      format: (v) => String(v),
+      parse: (text) => {
+        const n = parsePlainNumber(text, ['ms']);
+        return n === null ? 'Enter milliseconds, like 20.' : Math.round(n);
+      },
+      step: 1,
+      min: RENDER_CONFIG.crossfadeMinMs,
+      max: RENDER_CONFIG.crossfadeMaxMs,
+      width: 4,
+      suffix: 'ms',
+      onCommit: (ms) => {
+        this.seam.value = String(ms);
+        this.cb.onSeamMs(ms);
+      },
+    });
     this.seam = h('input', {
       attrs: {
         type: 'range',
@@ -74,13 +110,10 @@ export class LengthPanel {
         'data-testid': 'seam-smoothing',
       },
       on: {
-        input: () => {
-          this.seamValue.textContent = `${this.seam.value} ms`;
-        },
+        input: () => this.seamField.setValue(Number(this.seam.value)),
         change: () => this.cb.onSeamMs(Number(this.seam.value)),
       },
     });
-    this.seamValue = h('span', { class: 'mono small' });
 
     this.el = h('section', { class: 'card', attrs: { 'aria-label': 'Length' } }, [
       h('div', { class: 'card-head' }, [h('h2', { text: 'Length' }), h('div', { class: 'row' }, [a.el, b.el])]),
@@ -94,10 +127,10 @@ export class LengthPanel {
       this.note,
       h('details', { class: 'advanced' }, [
         h('summary', { text: 'Advanced' }),
-        h('label', { class: 'field' }, [
-          h('span', { text: 'Seam smoothing' }),
+        h('div', { class: 'field' }, [
+          h('label', { text: 'Seam smoothing', attrs: { for: 'seam-smoothing-input' } }),
           this.seam,
-          this.seamValue,
+          this.seamField.el,
         ]),
         h('div', {
           class: 'muted small',
@@ -107,31 +140,18 @@ export class LengthPanel {
     ]);
   }
 
-  private commitTarget(): void {
-    const s = parseTime(this.targetInput.value);
-    if (s === null || s <= 0) {
-      this.targetInput.setAttribute('aria-invalid', 'true');
-      return;
-    }
-    this.targetInput.removeAttribute('aria-invalid');
-    this.cb.onTarget(s);
-  }
-
   update(v: LengthView): void {
     this.original.textContent = formatTime(v.originalSeconds);
     this.extended.textContent = formatTime(v.extendedSeconds);
     this.modeInputs.repeats.checked = v.mode === 'repeats';
     this.modeInputs.target.checked = v.mode === 'target';
     this.targetRow.hidden = v.mode !== 'target';
-    if (document.activeElement !== this.targetInput) {
-      this.targetInput.value = formatTime(v.targetSeconds);
-      this.targetInput.removeAttribute('aria-invalid');
-    }
+    this.capSeconds = v.capSeconds;
+    this.capMessage = v.capMessage;
+    this.target.setValue(v.targetSeconds);
     this.note.textContent = v.note;
     this.note.className = v.noteKind === 'warn' ? 'small warn-text' : 'small muted';
-    if (Number(this.seam.value) !== v.seamMs || !this.seamValue.textContent) {
-      this.seam.value = String(v.seamMs);
-      this.seamValue.textContent = `${v.seamMs} ms`;
-    }
+    this.seam.value = String(v.seamMs);
+    this.seamField.setValue(v.seamMs);
   }
 }

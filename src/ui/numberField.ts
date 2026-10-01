@@ -211,13 +211,16 @@ export class NumberField {
       this.showError(problem);
       return;
     }
+    // Not dirty while the owner reacts: it may disable the field, and a blur from that must not commit again.
+    const wasDirty = this.dirty;
+    this.dirty = false;
     const refused = this.opts.onCommit(value);
     if (typeof refused === 'string') {
+      this.dirty = wasDirty;
       this.showError(refused);
       return;
     }
     this.value = value;
-    this.dirty = false;
     this.input.value = this.opts.format(value);
     this.clearError();
   }

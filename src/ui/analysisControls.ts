@@ -1,5 +1,9 @@
 import type { Analysis } from '../analysis/types';
 import { h } from './dom';
+import { NumberField, parsePlainNumber } from './numberField';
+
+export const BPM_MIN = 30;
+export const BPM_MAX = 300;
 
 export interface AnalysisControlsCallbacks {
   /** `null` returns to the automatic tempo. */
@@ -21,8 +25,12 @@ export class AnalysisControls {
   readonly el: HTMLElement;
   private tempoSelect: HTMLSelectElement;
   private meterSelect: HTMLSelectElement;
+  private bpmField: NumberField;
+  private shiftField: NumberField;
   private shiftLeft: HTMLButtonElement;
   private shiftRight: HTMLButtonElement;
+  /** The bar line's current place (0 to beats per bar - 1): typing a new one shifts by the difference. */
+  private phase = 0;
   private message: HTMLElement;
   private controls: HTMLElement;
 
@@ -34,6 +42,42 @@ export class AnalysisControls {
           const v = this.tempoSelect.value;
           this.cb.onTempo(v === 'auto' ? null : Number(v));
         },
+      },
+    });
+    this.bpmField = new NumberField({
+      id: 'bpm-input',
+      label: 'Tempo in beats per minute, from 30 to 300',
+      testId: 'bpm-input',
+      value: 120,
+      format: (v) => v.toFixed(1),
+      parse: (text) => {
+        const n = parsePlainNumber(text, ['bpm']);
+        return n === null ? 'Enter a tempo like 120 or 97.5.' : Math.round(n * 10) / 10;
+      },
+      step: 0.1,
+      min: BPM_MIN,
+      max: BPM_MAX,
+      width: 6,
+      suffix: 'BPM',
+      onCommit: (bpm) => this.cb.onTempo(bpm),
+    });
+    this.shiftField = new NumberField({
+      id: 'bar-shift-input',
+      label: 'Bar line position, in beats from the first beat',
+      testId: 'bar-shift-input',
+      value: 0,
+      format: (v) => String(v),
+      parse: (text) => {
+        const n = parsePlainNumber(text);
+        return n === null || !Number.isInteger(n) ? 'Enter a whole number of beats.' : n;
+      },
+      step: 1,
+      min: 0,
+      max: 3,
+      width: 3,
+      inputMode: 'numeric',
+      onCommit: (target) => {
+        if (target !== this.phase) this.cb.onShiftBar(target - this.phase);
       },
     });
     this.meterSelect = h('select', {
@@ -56,8 +100,14 @@ export class AnalysisControls {
     this.message = h('div', { class: 'small', attrs: { 'data-testid': 'analysis-message', role: 'status' } });
     this.controls = h('div', { class: 'row analysis-row' }, [
       h('label', { class: 'field' }, [h('span', { text: 'Tempo' }), this.tempoSelect]),
+      h('span', { class: 'field' }, [this.bpmField.el]),
       h('label', { class: 'field' }, [h('span', { text: 'Meter' }), this.meterSelect]),
-      h('span', { class: 'field' }, [h('span', { text: 'Shift bar line' }), this.shiftLeft, this.shiftRight]),
+      h('span', { class: 'field' }, [
+        h('label', { text: 'Shift bar line', attrs: { for: 'bar-shift-input' } }),
+        this.shiftLeft,
+        this.shiftField.el,
+        this.shiftRight,
+      ]),
     ]);
     this.el = h('div', { class: 'analysis-controls', attrs: { hidden: true } }, [this.controls, this.message]);
   }
@@ -90,7 +140,14 @@ export class AnalysisControls {
     this.tempoSelect.selectedIndex = 0;
     const meter = METERS.find(([, n]) => n === analysis.beatsPerBar);
     this.meterSelect.value = String(meter ? meter[1] : 4);
+    // typing a tempo overrides the detected one, like the half/double menu: show the override when there is one
+    this.bpmField.setValue(Math.round((analysis.bpmOverride ?? analysis.bpm) * 10) / 10);
+    this.phase = analysis.barPhase;
+    this.shiftField.setRange(0, Math.max(0, analysis.beatsPerBar - 1));
+    this.shiftField.setValue(analysis.barPhase);
     for (const el of [this.tempoSelect, this.meterSelect, this.shiftLeft, this.shiftRight]) el.disabled = busy;
+    this.bpmField.setDisabled(busy);
+    this.shiftField.setDisabled(busy);
   }
 
   private setMessage(analysis: Analysis | null): void {
