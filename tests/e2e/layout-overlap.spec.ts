@@ -63,6 +63,12 @@ for (const look of LOOKS) {
       await page.getByTestId('loop-start').first().fill('soon');
       await page.getByTestId('loop-start').first().press('Enter');
       await expect(page.getByTestId('loop-start').first()).toHaveAttribute('aria-invalid', 'true');
+      await page.getByTestId('end-at-input').fill('9:00.000');
+      await page.getByTestId('end-at-input').press('Enter');
+      await expect(page.getByTestId('end-at-input')).toHaveAttribute('aria-invalid', 'true');
+      await page.getByTestId('cut-end').first().fill('soon');
+      await page.getByTestId('cut-end').first().press('Enter');
+      await expect(page.getByTestId('cut-end').first()).toHaveAttribute('aria-invalid', 'true');
       await page.locator('summary', { hasText: 'Advanced' }).click();
       await page.getByTestId('length-mode-target').check();
       const speed = page.locator('summary', { hasText: 'Speed & pitch' });

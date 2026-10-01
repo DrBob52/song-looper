@@ -197,7 +197,7 @@ export async function auditPage(page: Page, what: string): Promise<string[]> {
   return found.map((p) => `${what}: ${p}`);
 }
 
-/** The loaded state of SPEC-v1.3.md 1: a song with two loops (one bridged, one rough with a nearby suggestion) and a cut. */
+/** The loaded state of SPEC-v1.3.md 1: a song with two loops (one bridged, one rough with a nearby suggestion), a cut, and an end point with a fade. */
 export async function loadBusyPage(page: Page): Promise<void> {
   const fixture = await makeChordFixture({ progressions: { A: 'C G Am F', B: 'Dm Em F G' }, structure: 'ABABABAB' }, 'demo-chords.wav');
   await page.goto('/');
@@ -217,4 +217,12 @@ export async function loadBusyPage(page: Page): Promise<void> {
   // one cut
   await page.evaluate(() => (window as unknown as { songLooper: { addCut(x: { start: number; end: number }): string | null } }).songLooper.addCut({ start: 40, end: 44 }));
   await expect(page.getByTestId('cut')).toHaveCount(1);
+  // an end point 10 s before the end of the extended song, and a fade into it
+  await page.evaluate(() => {
+    const a = (window as unknown as { songLooper: { naturalSeconds(): number; setEndingMode(m: string): void; setEndAt(s: number): string | null; setFade(s: number): string | null } }).songLooper;
+    a.setEndingMode('at');
+    a.setEndAt(Math.floor((a.naturalSeconds() - 10) * 1000) / 1000);
+    a.setFade(6);
+  });
+  await expect(page.getByTestId('length-ending')).toContainText('fades over 6 s');
 }

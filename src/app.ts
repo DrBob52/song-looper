@@ -13,6 +13,7 @@ import {
   cutSeconds,
   extendedDuration,
   extendedToOriginal,
+  naturalDuration,
   originalToExtended,
   planKey,
   plannedFrames,
@@ -30,11 +31,14 @@ import type { BitDepth } from './audio/wav';
 import { saveWav, warmUpSave } from './audio/save';
 import { barsBetween, emptyGrid, makeGrid, snapTime } from './grid';
 import type { Grid } from './grid';
-import type { Cut, LoopRegion, Plan, SeamPlan, Span } from './model';
+import type { Cut, Ending, LoopRegion, Plan, SeamPlan, Span } from './model';
 import { MAX_REPEATS } from './model';
 import {
   MIN_CUT_SECONDS,
   MIN_REGION_SECONDS,
+  REAL_ENDING,
+  checkEndAt,
+  checkFade,
   checkSpanPoints,
   fitSpan,
   freeGaps,
@@ -50,6 +54,8 @@ import {
 } from './plan';
 import { AnalysisControls } from './ui/analysisControls';
 import { CutsPanel } from './ui/cutsPanel';
+import { EndingPanel } from './ui/endingPanel';
+import type { EndingMode } from './ui/endingPanel';
 import { Dropzone } from './ui/dropzone';
 import { h } from './ui/dom';
 import { ExportDialog } from './ui/exportDialog';
@@ -77,6 +83,12 @@ export interface AppState {
   regions: LoopRegion[];
   /** Spans of the original song that the extended song skips (SPEC-v1.3.md 2). */
   cuts: Cut[];
+  /** Where and how the extended song ends (SPEC-v1.3.md 3). */
+  ending: Ending;
+  /** Target-length mode: End at follows the target (End exactly at target). */
+  endAtTarget: boolean;
+  /** A message about the ending, such as that End at was reset (shown in the Ending card until the user acts on it). */
+  endingNotice: string | null;
   /** The selected loop or cut (their ids never clash). */
   selectedId: string | null;
   selection: Span | null;
@@ -145,6 +157,9 @@ export class App {
     song: null,
     regions: [],
     cuts: [],
+    ending: REAL_ENDING,
+    endAtTarget: false,
+    endingNotice: null,
     selectedId: null,
     selection: null,
     playMode: 'original',
@@ -176,6 +191,9 @@ export class App {
   private transport: Transport;
   private regionsPanel: RegionsPanel;
   private cutsPanel: CutsPanel;
+  private endingPanel: EndingPanel;
+  /** The last End at time the user had, so that switching back to End at brings it back. */
+  private lastEndAt: number | null = null;
   private lengthPanel: LengthPanel;
   private exportDialog: ExportDialog;
   private songPanel: HTMLElement;
@@ -246,6 +264,15 @@ export class App {
         const c = id ? this.store.get().cuts.find((x) => x.id === id) : undefined;
         this.waveform?.setHighlight(c ? { start: c.start, end: c.end } : null);
       },
+    });
+    this.endingPanel = new EndingPanel({
+      onMode: (m) => this.setEndingMode(m),
+      checkEndAt: (sec) => this.checkEndAtNow(sec),
+      checkFade: (sec) => this.checkFadeNow(sec),
+      onEndAt: (sec) => this.setEndAt(sec),
+      onEndAtPlayhead: () => this.setEndAtFromPlayhead(),
+      onFade: (sec) => this.setFade(sec),
+      onEndAtTarget: () => this.endExactlyAtTarget(),
     });
     this.analysisControls = new AnalysisControls({
       onTempo: (bpm) => void this.updateAnalysis({ bpm }),
@@ -335,6 +362,7 @@ export class App {
         this.suggestionsPanel.el,
         this.regionsPanel.el,
         this.cutsPanel.el,
+        this.endingPanel.el,
         this.lengthPanel.el,
         this.timelineStrip.el,
       ],
@@ -378,8 +406,8 @@ export class App {
   // ---- state -> views ----------------------------------------------------------
 
   private plan(): Plan {
-    const { regions, cuts } = this.store.get();
-    return { regions, cuts };
+    const { regions, cuts, ending } = this.store.get();
+    return { regions, cuts, ending };
   }
 
   /** Everything that occupies a span of the song: loops and cuts block each other and the seam smoother's room. */
@@ -458,6 +486,8 @@ export class App {
     if (s.analysis !== prev.analysis || s.analysisState !== prev.analysisState) {
       this.analysisControls.update(s.analysis, s.analysisState === 'running');
     }
+    const endingChanged = s.ending !== prev.ending || s.endAtTarget !== prev.endAtTarget || s.endingNotice !== prev.endingNotice;
+    if (endingChanged || regionsChanged || cutsChanged || s.song !== prev.song || s.lengthMode !== prev.lengthMode) this.updateEndingPanel();
     if (s.selection !== prev.selection) this.waveform?.setSelection(s.selection);
     if (s.playMode !== prev.playMode) this.transport.setMode(s.playMode);
     if (s.notice !== prev.notice) this.noticeEl.textContent = s.notice ?? '';
@@ -467,6 +497,7 @@ export class App {
     if (
       regionsChanged ||
       cutsChanged ||
+      endingChanged ||
       s.song !== prev.song ||
       s.seamMs !== prev.seamMs ||
       s.lengthMode !== prev.lengthMode ||
@@ -474,11 +505,13 @@ export class App {
     ) {
       if (s.song) this.timeline = buildTimeline(this.plan(), s.song.duration);
       this.updateLength();
-      this.timelineStrip.update(this.timeline, s.regions);
-      this.onPlanChanged(regionsChanged || cutsChanged || s.seamMs !== prev.seamMs);
+      this.timelineStrip.update(this.timeline, s.regions, s.ending);
+      this.onPlanChanged(regionsChanged || cutsChanged || s.ending !== prev.ending || s.seamMs !== prev.seamMs);
     } else if (s.bitDepth !== prev.bitDepth) {
       this.updateLength();
     }
+    // a shorter song may no longer reach the end point: the song ends at its real ending again, with a notice
+    if (regionsChanged || cutsChanged || s.song !== prev.song) this.enforceEnding();
   }
 
   /** The most seconds of extended song a WAV can hold for this song's channels and sample rate at a bit depth. */
@@ -530,6 +563,8 @@ export class App {
       targetSeconds,
       originalSeconds: song.duration,
       extendedSeconds: ext,
+      endAt: this.store.get().ending.endAt,
+      fadeSeconds: this.store.get().ending.fadeSeconds,
       seamMs,
       note,
       noteKind,
@@ -640,6 +675,9 @@ export class App {
       song,
       regions: [],
       cuts: [],
+      ending: REAL_ENDING,
+      endAtTarget: false,
+      endingNotice: null,
       selectedId: null,
       selection: null,
       playMode: 'original',
@@ -654,6 +692,7 @@ export class App {
       seams: {},
     });
     this.seamKeys.clear();
+    this.lastEndAt = null;
     this.dropzone.showFile(song);
     this.dropzone.showWarning(
       song.duration > ANALYSIS_CONFIG.limits.longSongSeconds
@@ -919,31 +958,39 @@ export class App {
    * Frames in the extended song as it will be rendered: the timeline's length, adjusted for the few samples by which
    * the edges of each loop snap to zero crossings (which add up over thousands of repeats).
    */
-  private plannedFrames(regions: readonly LoopRegion[] = this.store.get().regions, cuts: readonly Cut[] = this.store.get().cuts): number {
+  private plannedFrames(
+    regions: readonly LoopRegion[] = this.store.get().regions,
+    cuts: readonly Cut[] = this.store.get().cuts,
+    ending: Ending = this.store.get().ending,
+  ): number {
     const { song } = this.store.get();
     if (!song) return 0;
-    return plannedFrames(song.buffer, { regions: [...regions], cuts: [...cuts] });
+    return plannedFrames(song.buffer, { regions: [...regions], cuts: [...cuts], ending });
   }
 
   /** Set the regions, computing repeat counts from the target length when in target mode. */
   private commitRegions(regions: LoopRegion[], extra: Partial<AppState> = {}): void {
     const { song, lengthMode, targetSeconds } = this.store.get();
     const cuts = extra.cuts ?? this.store.get().cuts;
+    const ending = extra.ending ?? this.store.get().ending;
+    const exactEnd = ending.endAt !== null && (extra.endAtTarget ?? this.store.get().endAtTarget);
     let next = sortRegions(regions);
     if (song && lengthMode === 'target' && next.length > 0) {
       // never longer than a WAV can hold (at 16-bit, the deepest it can go)
       const cap = maxWavFrames(song.channels, 16);
       // the repeats are added to the song without its cuts
       const base = song.duration - cutSeconds({ regions: next, cuts }, song.duration);
+      // End exactly at target: the song must reach the target (it is trimmed to it), and what it plays past it is not heard
       const res = solveRepeats(
         next.map((r) => ({ start: r.start, end: r.end, score: r.score, extra: cycleSeconds(loopPath(r)) - (r.end - r.start) })),
         base,
         targetSeconds,
-        cap / song.sampleRate,
+        exactEnd ? Infinity : cap / song.sampleRate,
+        exactEnd ? targetSeconds : 0,
       );
       next = next.map((r, i) => (r.repeats === res.repeats[i] ? r : { ...r, repeats: res.repeats[i]! }));
       // the few samples lost to zero-crossing snaps can add up to a second or two over thousands of repeats
-      for (let guard = 0; guard < 50 && this.plannedFrames(next, cuts) > cap; guard++) {
+      for (let guard = 0; guard < 50 && this.plannedFrames(next, cuts, ending) > cap; guard++) {
         let pick = -1;
         next.forEach((r, i) => {
           if (r.repeats > 1 && (pick < 0 || r.end - r.start > next[pick]!.end - next[pick]!.start)) pick = i;
@@ -974,14 +1021,125 @@ export class App {
       const base = song.duration - cutSeconds(this.plan(), song.duration);
       this.store.set({ lengthMode: mode, targetSeconds: Math.max(Math.round(ext), Math.ceil(base)) });
     } else {
-      this.store.set({ lengthMode: mode });
+      // End at stays as a plain time once the target no longer drives it
+      this.store.set({ lengthMode: mode, endAtTarget: false });
     }
     this.commitRegions(regions);
   }
 
   setTarget(seconds: number): void {
+    const { ending, endAtTarget, regions } = this.store.get();
     this.store.set({ targetSeconds: seconds });
-    this.commitRegions(this.store.get().regions);
+    // End exactly at target: the end point follows the target
+    if (endAtTarget && ending.endAt !== null) this.commitRegions(regions, { ending: { ...ending, endAt: seconds } });
+    else this.commitRegions(regions);
+  }
+
+  // ---- the ending (SPEC-v1.3.md 3) ---------------------------------------------------
+
+  /** Length of the extended song in seconds before the end point trims it: what End at is measured on. */
+  private naturalSeconds(): number {
+    const { song, regions, cuts } = this.store.get();
+    return song ? naturalDuration({ regions, cuts }, song.duration) : 0;
+  }
+
+  private updateEndingPanel(): void {
+    const { song, ending, lengthMode, endAtTarget, endingNotice } = this.store.get();
+    if (!song) return;
+    const natural = this.naturalSeconds();
+    this.endingPanel.update({
+      mode: ending.endAt === null ? 'real' : 'at',
+      endAt: ending.endAt ?? roundMs(natural),
+      fadeSeconds: ending.fadeSeconds,
+      natural,
+      targetMode: lengthMode === 'target',
+      followsTarget: endAtTarget,
+      notice: endingNotice,
+    });
+  }
+
+  private checkEndAtNow(seconds: number): string | null {
+    return checkEndAt(seconds, this.store.get().ending.fadeSeconds, this.naturalSeconds());
+  }
+
+  private checkFadeNow(seconds: number): string | null {
+    return checkFade(seconds, this.store.get().ending.endAt, this.naturalSeconds());
+  }
+
+  /** Real ending, or End at (the last time the user had, or the end of the song). */
+  setEndingMode(mode: EndingMode): void {
+    const { song, ending } = this.store.get();
+    if (!song) return;
+    if (mode === 'real') {
+      if (ending.endAt !== null) this.lastEndAt = ending.endAt;
+      this.store.set({ ending: { endAt: null, fadeSeconds: ending.fadeSeconds }, endAtTarget: false, endingNotice: null });
+      return;
+    }
+    if (ending.endAt !== null) return;
+    const natural = this.naturalSeconds();
+    const fits = this.lastEndAt !== null && this.lastEndAt <= natural + 5e-4 && this.lastEndAt >= ending.fadeSeconds;
+    const endAt = fits ? this.lastEndAt! : Math.floor(natural * 1000) / 1000;
+    this.store.set({ ending: { endAt, fadeSeconds: ending.fadeSeconds }, endingNotice: null });
+  }
+
+  /** A typed End at time on the extended timeline. Returns the reason when refused. */
+  setEndAt(seconds: number): string | null {
+    const refused = this.checkEndAtNow(seconds);
+    if (refused) return refused;
+    const { ending } = this.store.get();
+    this.lastEndAt = seconds;
+    this.store.set({ ending: { endAt: seconds, fadeSeconds: ending.fadeSeconds }, endAtTarget: false, endingNotice: null });
+    return null;
+  }
+
+  /** End at = where the playhead is on the extended timeline (the extended song's own clock, or the mapped original). */
+  setEndAtFromPlayhead(): string | null {
+    const { song, playMode } = this.store.get();
+    if (!song) return 'Load a song first.';
+    const t = playMode === 'extended' && !this.player.isAuxPlaying() ? this.player.getTime() : originalToExtended(this.timeline, this.originalPlayhead());
+    return this.setEndAt(roundMs(t));
+  }
+
+  /** A typed or slid fade length. Returns the reason when refused. */
+  setFade(seconds: number): string | null {
+    const refused = this.checkFadeNow(seconds);
+    if (refused) return refused;
+    const { ending } = this.store.get();
+    this.store.set({ ending: { endAt: ending.endAt, fadeSeconds: seconds }, endingNotice: null });
+    return null;
+  }
+
+  /** Target-length mode: End at = the target, repeats solved to reach at least the target, so the song is trimmed to it exactly. */
+  endExactlyAtTarget(): void {
+    const { song, lengthMode, targetSeconds, ending, regions } = this.store.get();
+    if (!song || lengthMode !== 'target' || regions.length === 0) return;
+    const fade = Math.min(ending.fadeSeconds, targetSeconds);
+    this.lastEndAt = targetSeconds;
+    this.commitRegions(regions, { ending: { endAt: targetSeconds, fadeSeconds: fade }, endAtTarget: true, endingNotice: null });
+  }
+
+  /**
+   * After the loops or cuts changed: an End at beyond the new, shorter song goes back to the real ending (with a notice),
+   * and a fade longer than the song up to its end is cut to fit.
+   */
+  private enforceEnding(): void {
+    const { song, ending, endAtTarget, endingNotice } = this.store.get();
+    if (!song) return;
+    const natural = this.naturalSeconds();
+    let next = ending;
+    let notice: string | null = null;
+    if (ending.endAt !== null && ending.endAt > natural + 5e-4) {
+      next = { endAt: null, fadeSeconds: ending.fadeSeconds };
+      notice = 'End point was past the new ending, so the song now ends at its real ending.';
+    }
+    const limit = next.endAt ?? natural;
+    if (next.fadeSeconds > limit + 1e-9) {
+      const fade = Math.max(0, Math.floor(limit * 10) / 10);
+      next = { ...next, fadeSeconds: fade };
+      notice ??= `The fade was longer than the song, so it is now ${fade} s.`;
+    }
+    if (next === ending) return;
+    this.store.set({ ending: next, endAtTarget: next.endAt === null ? false : endAtTarget, endingNotice: notice ?? endingNotice });
   }
 
   /** Seek the extended preview (switching to it if needed). */

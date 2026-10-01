@@ -1588,6 +1588,55 @@ input.nf-input:disabled {
   transform: translateX(-100%);
 }
 
+/* the Ending on the strip: the fade's ramp, and what lies after the end point dimmed with a marker at the end */
+.tl-ending {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  border-radius: 16px;
+  overflow: hidden;
+  pointer-events: none;
+}
+
+.tl-ramp {
+  background:
+    linear-gradient(to bottom right, transparent calc(50% - 1px), var(--ink) calc(50% - 1px) calc(50% + 1px), transparent calc(50% + 1px)),
+    linear-gradient(to bottom right, transparent 50%, color-mix(in srgb, var(--sleeve) 62%, transparent) 50%);
+}
+
+.tl-dim {
+  flex: 1 1 0;
+  background: color-mix(in srgb, var(--sleeve) 70%, transparent);
+  border-left: 2px solid var(--ink);
+}
+
+.length-ending {
+  margin-top: 4px;
+  color: var(--ink-soft);
+}
+
+.ending-row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-start;
+  gap: 8px 16px;
+  margin-bottom: 10px;
+}
+
+.ending-row .field {
+  min-height: 32px;
+}
+
+.ending-row input[type='range'] {
+  width: 180px;
+  max-width: 40vw;
+  align-self: center;
+}
+
+.ending-row .btn {
+  align-self: flex-start;
+}
+
 /* fine grooves over everything */
 .tl-bar::after {
   content: '';

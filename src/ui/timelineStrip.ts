@@ -1,5 +1,5 @@
 import type { Segment } from '../audio/render';
-import type { LoopRegion, Span } from '../model';
+import type { Ending, LoopRegion, Span } from '../model';
 import { formatClock, formatTime } from '../util/time';
 import { h } from './dom';
 import { loopCss, loopInkCss } from './loopColors';
@@ -16,6 +16,8 @@ export class TimelineStrip {
   private bar: HTMLElement;
   private head: HTMLElement;
   private marks: HTMLElement;
+  /** Drawn over the bar: the ramp of the fade-out and what lies after the end point, dimmed. */
+  private endingEl: HTMLElement;
   private total = 0;
 
   constructor(private onSeek: (extendedSeconds: number) => void) {
@@ -48,13 +50,18 @@ export class TimelineStrip {
     });
     // the scissors of the cuts: one above every join where the extended song skips a cut
     this.marks = h('div', { class: 'tl-marks', attrs: { hidden: true, 'aria-hidden': 'true' } });
+    // overlap guard: the dimmed part and the fade's ramp are drawn over the strip and its numbers on purpose
+    this.endingEl = h('div', {
+      class: 'tl-ending',
+      attrs: { hidden: true, 'aria-hidden': 'true', 'data-testid': 'timeline-ending', 'data-overlap-ok': 'the dimmed part after the end point and the fade ramp are drawn over the strip on purpose' },
+    });
     this.el = h('section', { class: 'card', attrs: { 'aria-label': 'Extended timeline' } }, [
       h('div', { class: 'card-head' }, [
         h('h2', { text: 'Extended timeline' }),
         h('span', { class: 'muted small', text: 'The run-out groove: click to play the extended cut from there' }),
       ]),
       this.marks,
-      h('div', { class: 'tl-wrap' }, [this.bar, this.head]),
+      h('div', { class: 'tl-wrap' }, [this.bar, this.endingEl, this.head]),
     ]);
   }
 
@@ -64,10 +71,11 @@ export class TimelineStrip {
     this.onSeek(Math.max(0, Math.min(this.total, this.pos + delta)));
   }
 
-  update(segments: Segment[], regions: LoopRegion[]): void {
+  update(segments: Segment[], regions: LoopRegion[], ending?: Ending): void {
     this.bar.replaceChildren();
     this.total = segments.length ? segments[segments.length - 1]!.outEnd : 0;
     this.updateMarks(segments);
+    this.updateEnding(ending);
     if (this.total <= 0) return;
     const byId = new Map(regions.map((r, i) => [r.id, { region: r, index: i }]));
     if (segments.length > MAX_BLOCKS) {
@@ -95,6 +103,31 @@ export class TimelineStrip {
         block.title = `Original ${formatTime(seg.start, 1)} – ${formatTime(seg.end, 1)}`;
       }
       this.bar.append(block);
+    }
+  }
+
+  /**
+   * The Ending on the strip (SPEC-v1.3.md 3.2): the end point as a marker, everything after it dimmed, and the fade as a
+   * ramp (the gain line falling to the end point, the level it takes away shaded).
+   */
+  private updateEnding(ending: Ending | undefined): void {
+    const el = this.endingEl;
+    el.replaceChildren();
+    const fades = (ending?.fadeSeconds ?? 0) > 0;
+    if (!ending || this.total <= 0 || (ending.endAt === null && !fades)) {
+      el.hidden = true;
+      return;
+    }
+    el.hidden = false;
+    const end = Math.min(this.total, ending.endAt ?? this.total);
+    const fade = Math.min(end, ending.fadeSeconds);
+    const pct = (v: number): string => `${(v / this.total) * 100}%`;
+    el.append(h('div', { class: 'tl-keep', style: { flex: `0 0 ${pct(end - fade)}` } }));
+    if (fade > 0) {
+      el.append(h('div', { class: 'tl-ramp', style: { flex: `0 0 ${pct(fade)}` }, attrs: { title: `Fade out over ${ending.fadeSeconds} s, ending at ${formatClock(end)}` } }));
+    }
+    if (end < this.total - 1e-9) {
+      el.append(h('div', { class: 'tl-dim', attrs: { title: `The song ends at ${formatClock(end)}: what lies after it is not played` } }));
     }
   }
 

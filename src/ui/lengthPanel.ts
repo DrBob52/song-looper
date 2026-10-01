@@ -15,7 +15,11 @@ export interface LengthView {
   mode: LengthMode;
   targetSeconds: number;
   originalSeconds: number;
+  /** The length of the song as it is exported: after the cuts and the end point. */
   extendedSeconds: number;
+  /** The Ending: where the song stops (null: its real ending) and the fade-out into it. */
+  endAt: number | null;
+  fadeSeconds: number;
   seamMs: number;
   note: string;
   noteKind: 'info' | 'warn';
@@ -30,6 +34,7 @@ export class LengthPanel {
   readonly el: HTMLElement;
   private original: HTMLElement;
   private extended: HTMLElement;
+  private ending: HTMLElement;
   private note: HTMLElement;
   private modeInputs: Record<LengthMode, HTMLInputElement>;
   private target: NumberField;
@@ -42,6 +47,7 @@ export class LengthPanel {
   constructor(private cb: LengthPanelCallbacks) {
     this.original = h('span', { class: 'mono big', attrs: { 'data-testid': 'length-original' } });
     this.extended = h('span', { class: 'mono big', attrs: { 'data-testid': 'length-extended' } });
+    this.ending = h('div', { class: 'length-ending small mono', attrs: { hidden: true, 'data-testid': 'length-ending' } });
     this.note = h('div', { class: 'small', attrs: { id: 'length-note', 'data-testid': 'length-note', role: 'status' } });
 
     const mkMode = (mode: LengthMode, label: string): { input: HTMLInputElement; el: HTMLElement } => {
@@ -123,6 +129,7 @@ export class LengthPanel {
         this.extended,
       ]),
       h('div', { class: 'length-caption', text: 'original \u2192 extended cut' }),
+      this.ending,
       this.targetRow,
       this.note,
       h('details', { class: 'advanced' }, [
@@ -142,7 +149,12 @@ export class LengthPanel {
 
   update(v: LengthView): void {
     this.original.textContent = formatTime(v.originalSeconds);
-    this.extended.textContent = formatTime(v.extendedSeconds);
+    // with an end point the figure is exact to the millisecond ("3:42 -> 14:20.000"), and the fade is said under it
+    this.extended.textContent = v.endAt !== null ? formatClock(v.extendedSeconds) : formatTime(v.extendedSeconds);
+    const ends = v.endAt !== null ? `Ends at ${formatClock(v.extendedSeconds)}` : '';
+    const fades = v.fadeSeconds > 0 ? `${v.endAt !== null ? ', f' : 'F'}ades over ${v.fadeSeconds} s` : '';
+    this.ending.hidden = !ends && !fades;
+    this.ending.textContent = `${ends}${fades}`;
     this.modeInputs.repeats.checked = v.mode === 'repeats';
     this.modeInputs.target.checked = v.mode === 'target';
     this.targetRow.hidden = v.mode !== 'target';

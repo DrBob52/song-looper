@@ -1,5 +1,5 @@
-import type { Cut, LoopRegion, SeamPlan, Span } from './model';
-import { REGION_COLORS } from './model';
+import type { Cut, Ending, LoopRegion, SeamPlan, Span } from './model';
+import { MAX_FADE_SECONDS, REGION_COLORS } from './model';
 import { formatClock } from './util/time';
 
 export const MIN_REGION_SECONDS = 0.1;
@@ -163,5 +163,47 @@ export function checkSpanPoints(e: SpanEdit): string | null {
   const cuts = sortCuts(e.cuts);
   const cut = cuts.find((c) => !(e.what === 'cut' && c.id === e.id) && hits(c));
   if (cut) return `Overlaps Cut ${cuts.indexOf(cut) + 1} (${formatClock(cut.start)}\u2013${formatClock(cut.end)}).`;
+  return null;
+}
+
+// ---------------------------------------------------------------------------
+// The ending (SPEC-v1.3.md 3): where the extended song stops, and the fade into it
+// ---------------------------------------------------------------------------
+
+/** No end point (the real ending) and no fade. */
+export const REAL_ENDING: Ending = { endAt: null, fadeSeconds: 0 };
+
+/** Does the plan end anywhere but at the end of the song, or fade? */
+export function hasEnding(e: Ending | undefined): boolean {
+  return Boolean(e && (e.endAt !== null || e.fadeSeconds > 0));
+}
+
+/**
+ * Why an End at time is not allowed, or null. `natural` is the length of the extended song before the end point trims it.
+ * The end must be after 0 and within the extended song, and the fade into it cannot be longer than it.
+ */
+export function checkEndAt(endAt: number, fadeSeconds: number, natural: number): string | null {
+  if (!Number.isFinite(endAt)) return 'That is not a time.';
+  if (endAt <= 0) return `End at must be after ${formatClock(0)}.`;
+  if (endAt > natural + 5e-4) return `The extended song is only ${formatClock(natural)} long. End at must be before that.`;
+  if (fadeSeconds > endAt + 1e-9) {
+    return `The fade (${fadeSeconds} s) is longer than the song up to End at (${formatClock(endAt)}). Make the fade shorter or End at later.`;
+  }
+  return null;
+}
+
+/**
+ * Why a fade length is not allowed, or null: 0 to 60 s, and not longer than the song up to its end point (`endAt`, or the
+ * whole extended song, `natural`, when it ends at its real ending).
+ */
+export function checkFade(fadeSeconds: number, endAt: number | null, natural: number): string | null {
+  if (!Number.isFinite(fadeSeconds)) return 'That is not a number of seconds.';
+  if (fadeSeconds < 0 || fadeSeconds > MAX_FADE_SECONDS) return `The fade is 0 to ${MAX_FADE_SECONDS} seconds.`;
+  const limit = endAt ?? natural;
+  if (fadeSeconds > limit + 1e-9) {
+    return endAt === null
+      ? `The fade can't be longer than the song (${formatClock(natural)}).`
+      : `The fade can't be longer than End at (${formatClock(endAt)}).`;
+  }
   return null;
 }

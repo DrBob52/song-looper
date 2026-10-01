@@ -35,6 +35,11 @@ export function solveRepeats(
   target: number,
   /** The result is never longer than this (the most a WAV can hold), even when a longer one would be closer. */
   maxTotal = Infinity,
+  /**
+   * The result is never shorter than this: with End exactly at target (SPEC-v1.3.md 3.1) the song has to be at least the
+   * target so that it can be trimmed to it, and the repeats that overshoot least are chosen.
+   */
+  minTotal = 0,
 ): TargetResult {
   const n = regions.length;
   const lens = regions.map((r) => Math.max(1e-6, r.end - r.start + (r.extra ?? 0)));
@@ -64,6 +69,27 @@ export function solveRepeats(
     reps[pick] = Math.max(1, reps[pick]! - Math.max(1, Math.floor(over / lens[pick]! / 2)));
   }
 
+  // At least `minTotal`: add the repeat that comes closest from above, or the longest cycle while still far below it
+  for (let guard = 0; guard < 100_000 && total(lens, reps, duration) < minTotal - 1e-9; guard++) {
+    const current = total(lens, reps, duration);
+    let pick = -1;
+    let pickOver = Infinity;
+    for (let i = 0; i < n; i++) {
+      if (reps[i]! >= MAX_REPEATS) continue;
+      const over = current + lens[i]! - minTotal;
+      if (over >= -1e-9 && over < pickOver) {
+        pick = i;
+        pickOver = over;
+      }
+    }
+    if (pick < 0) {
+      // none reaches it in one step: take the longest cycle, many at once while far below
+      for (let i = 0; i < n; i++) if (reps[i]! < MAX_REPEATS && (pick < 0 || lens[i]! > lens[pick]!)) pick = i;
+      if (pick < 0) break;
+      reps[pick] = Math.min(MAX_REPEATS, reps[pick]! + Math.max(1, Math.floor((minTotal - current) / lens[pick]! / 2)));
+    } else reps[pick] = reps[pick]! + 1;
+  }
+
   // Fix rounding: add or remove single repeats while that gets closer to the target.
   for (let guard = 0; guard < 10_000; guard++) {
     const current = total(lens, reps, duration);
@@ -76,6 +102,7 @@ export function solveRepeats(
         const r = reps[i]! + delta;
         if (r < 1 || r > MAX_REPEATS) continue;
         if (delta > 0 && current + lens[i]! > maxTotal + 1e-9) continue;
+        if (delta < 0 && current - lens[i]! < minTotal - 1e-9) continue;
         const err = Math.abs(current + delta * lens[i]! - target);
         if (err < bestErr - 1e-9) {
           bestErr = err;
