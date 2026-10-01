@@ -110,6 +110,10 @@ export class AnalysisSession {
       this.phaseShift = (((this.phaseShift + change.phaseShift) % b) + b) % b;
       rebar = true;
     }
+    // The harmonic model is calibrated to the bar length and built from the beats, so a new meter, bar line or
+    // tempo makes the cached one stale. computeStructure rebuilds it for songs that get suggestions; for a song
+    // too short for them it is rebuilt when the next seam report asks for it (ensureSeamData).
+    if (rebar || rebeat) this.harmonyModel = null;
     // Beat-synchronous features and the similarity matrix depend on the beats only; the sections
     // and candidates also depend on where the bar lines are.
     if (rebeat) this.computeFeaturesAndSsm(progress);
@@ -294,7 +298,8 @@ export class AnalysisSession {
     this.sections = [];
     this.candidates = [];
     this.sectionBoundaries = [];
-    if (!this.features || !this.ssm) return;
+    // A short song only has features because a seam report built them: it still gets no sections or suggestions.
+    if (!this.canSuggest() || !this.features || !this.ssm) return;
     progress('candidates', 0);
     const barBeats = this.barBeats();
     // The harmony model needs the bar length (matches must be a bar apart), so it follows the meter.

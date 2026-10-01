@@ -265,3 +265,113 @@ test('bridge: target-length mode counts the bridge when it picks repeat counts',
   expect(r.repeats).toBeLessThan(1 + Math.round((120 - fixture.duration) / (a!.end - a!.start)));
   await expect.poll(async () => Math.abs((await shownLength(page)) - total)).toBeLessThanOrEqual(0.51);
 });
+
+interface ArrivalLog {
+  /** The loop's plan at the moment a new analysis arrived: the plan it had before ('old'), another one, or none. */
+  plan: 'old' | 'other' | 'none';
+  seamReports: number;
+  repeats: number;
+}
+
+/** Remember the loop's current seam plan, and log what the loop looks like each time a new analysis arrives. */
+async function watchAnalysisArrivals(page: Page): Promise<void> {
+  await page.evaluate(() => {
+    type S = { analysis: unknown; regions: { seam?: unknown; repeats: number }[]; seams: Record<string, unknown> };
+    const w = window as unknown as {
+      songLooper: { store: { get(): S; subscribe(fn: (s: S, prev: S) => void): void } };
+      __oldPlan: unknown;
+      __arrivals: unknown[];
+    };
+    w.__oldPlan = w.songLooper.store.get().regions[0]!.seam;
+    w.__arrivals = [];
+    w.songLooper.store.subscribe((s, prev) => {
+      if (s.analysis === prev.analysis) return;
+      const seam = s.regions[0]?.seam;
+      w.__arrivals.push({
+        plan: seam === w.__oldPlan ? 'old' : seam ? 'other' : 'none',
+        seamReports: Object.keys(s.seams).length,
+        repeats: s.regions[0]?.repeats ?? 0,
+      });
+    });
+  });
+}
+
+const arrivals = (page: Page): Promise<ArrivalLog[]> => page.evaluate(() => (window as unknown as { __arrivals: ArrivalLog[] }).__arrivals);
+
+test('a new meter, bar line or tempo drops the loop\'s stale seam plan; a fresh report and plan arrive for the new beats', async ({ page }) => {
+  const errors: string[] = [];
+  page.on('pageerror', (e) => errors.push(e.message));
+  const fixture = await makeChordFixture(SONG1, 'song1.wav');
+  await loadFixture(page, fixture);
+  await waitForAnalysis(page);
+  const [a] = fixture.sections;
+  await addLoop(page, a!.start, a!.end);
+  await expect(page.getByTestId('seam-summary').first()).toBeVisible();
+  await expect(page.getByTestId('seam-chip').first()).toHaveText('Rough');
+  await watchAnalysisArrivals(page);
+
+  const changes: [string, () => Promise<unknown>][] = [
+    ['bar line', () => page.getByTestId('bar-shift-right').click()],
+    ['meter', () => page.getByTestId('meter-select').selectOption('3')],
+    ['tempo', () => page.getByTestId('tempo-select').selectOption({ index: 1 })],
+  ];
+  for (const [i, [what, change]] of changes.entries()) {
+    const oldPlan = await appState<unknown>(page, 's.regions[0].seam');
+    expect(oldPlan, `${what}: the loop has a plan before`).toBeTruthy();
+    await change();
+    // the analysis arrived: the plan that was made for the old beats went with it, and so did the old report
+    await expect.poll(async () => (await arrivals(page)).length, { message: what }).toBe(i + 1);
+    const arrival = (await arrivals(page))[i]!;
+    expect(arrival.plan, `${what}: the stale plan is dropped when the new analysis arrives`).toBe('none');
+    expect(arrival.seamReports).toBe(0);
+    // a fresh plan (a different object, from a new report) and chip follow
+    await expect
+      .poll(async () => page.evaluate(() => {
+        const w = window as unknown as { songLooper: { store: { get(): { regions: { seam?: unknown }[]; seams: Record<string, unknown> } } } };
+        const s = w.songLooper.store.get();
+        return Boolean(s.regions[0]?.seam) && Object.keys(s.seams).length === 1;
+      }), { message: `${what}: a fresh plan and report` })
+      .toBe(true);
+    await expect(page.getByTestId('seam-summary').first()).toBeVisible();
+    await expect(page.getByTestId('seam-chip').first()).toBeVisible();
+    // the loop itself was not touched
+    const r = (await appState<{ start: number; end: number; seam: { forStart: number; forEnd: number; shift: number } }[]>(page, 's.regions'))[0]!;
+    expect(r.start).toBe(a!.start);
+    expect(r.end).toBe(a!.end);
+    expect(r.seam.forStart).toBe(a!.start);
+    expect(r.seam.forEnd).toBe(a!.end);
+    // and the plan was made for the new beats: it moves the seam by at most one beat of the new tempo
+    const bpm = await appState<number>(page, 's.analysis.bpm');
+    expect(Math.abs(r.seam.shift)).toBeLessThanOrEqual(60 / bpm + 1e-6);
+  }
+  expect(errors).toEqual([]);
+});
+
+test('a bridge that goes away with the old plan puts target-length mode back in step, and comes back with the new one', async ({ page }) => {
+  const errors: string[] = [];
+  page.on('pageerror', (e) => errors.push(e.message));
+  const fixture = await makeChordFixture(SONG1, 'song1.wav');
+  await loadFixture(page, fixture);
+  await waitForAnalysis(page);
+  const [a] = fixture.sections;
+  await addLoop(page, a!.start, a!.end);
+  await page.getByTestId('bridge-toggle').first().check();
+  await expect(page.getByTestId('bridge-status').first()).toHaveText(/^Bridge: 4 bars/);
+  await page.getByTestId('length-mode-target').check();
+  await page.getByTestId('target-input').fill('2:00');
+  await page.getByTestId('target-input').press('Enter');
+  await expect(page.getByTestId('length-note')).toContainText('Closest whole repeats');
+  const bridged = (await appState<{ repeats: number }[]>(page, 's.regions'))[0]!.repeats;
+  await watchAnalysisArrivals(page);
+
+  await page.getByTestId('bar-shift-right').click();
+  await expect.poll(async () => (await arrivals(page)).length).toBe(1);
+  const arrival = (await arrivals(page))[0]!;
+  expect(arrival.plan).toBe('none');
+  // without the bridge a cycle is shorter, so the repeat counts were solved again for the plain loop at once
+  expect(arrival.repeats).toBeGreaterThan(bridged);
+  // the new report finds the bridge again and the counts follow it back
+  await expect(page.getByTestId('bridge-status').first()).toHaveText(/^Bridge: 4 bars/);
+  await expect.poll(async () => (await appState<{ repeats: number }[]>(page, 's.regions'))[0]!.repeats).toBe(bridged);
+  expect(errors).toEqual([]);
+});

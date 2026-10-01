@@ -574,7 +574,19 @@ export class App {
     const song = this.store.get().song;
     if (!song) return;
     this.seamKeys.clear();
-    this.store.set({ analysis, analysisState: 'done', grid: makeGrid(analysis, song.duration), candidateLabels: [], seams: {} });
+    const fresh: Partial<AppState> = {
+      analysis,
+      analysisState: 'done',
+      grid: makeGrid(analysis, song.duration),
+      candidateLabels: [],
+      seams: {},
+    };
+    // Seam plans were made for the old beats (tempo, meter, bar lines): drop them, and the reports asked for above
+    // bring new ones. Going through commitRegions keeps the repeat counts of target-length mode in step (a bridge
+    // that goes away changes the length of a cycle).
+    const regions = this.store.get().regions;
+    if (regions.some((r) => r.seam)) this.commitRegions(regions.map(({ seam: _plan, ...r }) => r), fresh);
+    else this.store.set(fresh);
     // Optional labeller (no-op by default); a failure only means "no labels".
     const token = this.loadToken;
     this.labelProvider

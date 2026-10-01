@@ -164,3 +164,67 @@ describe('seam report edge cases', () => {
     expect(['clean', 'ok', 'rough']).toContain(r!.chip);
   });
 });
+
+describe('seam data after the tempo, meter or bar lines change', () => {
+  it('a new meter, bar-line shift or tempo drops the cached harmony model and seam analysis; the next report rebuilds them', () => {
+    const { session, analysis } = analyseChordSong(SONG1);
+    const [loopA] = [{ id: 'x', start: 0, end: 16 }];
+    expect(session.seamReport([loopA])[0]!.plan).not.toBeNull();
+    let model = session.harmony!;
+    let tool = session.seamAnalysis()!;
+    expect(model.beatsPerBar).toBe(4);
+    expect(model.n).toBe(analysis.beats.length);
+
+    // meter: the model is calibrated to the bar length
+    let a = session.update({ beatsPerBar: 3 });
+    expect(session.harmony).not.toBe(model);
+    expect(session.harmony!.beatsPerBar).toBe(3);
+    expect(session.seamAnalysis()).not.toBe(tool);
+    expect(session.seamAnalysis()!.inputs.beatsPerBar).toBe(3);
+    expect(session.seamAnalysis()!.inputs.harmony).toBe(session.harmony);
+    expect(a.beatsPerBar).toBe(3);
+    model = session.harmony!;
+    tool = session.seamAnalysis()!;
+
+    // bar line: a new model and analyzer, with the new bar phase
+    a = session.update({ phaseShift: 1 });
+    expect(session.harmony).not.toBe(model);
+    expect(session.seamAnalysis()).not.toBe(tool);
+    expect(session.seamAnalysis()!.inputs.barPhase).toBe(a.barPhase);
+    model = session.harmony!;
+    tool = session.seamAnalysis()!;
+
+    // tempo: the beats themselves change, and so does everything built from them
+    a = session.update({ bpm: analysis.bpm / 2 });
+    expect(a.beats.length).toBeLessThan(analysis.beats.length * 0.6);
+    expect(session.harmony).not.toBe(model);
+    expect(session.harmony!.n).toBe(a.beats.length);
+    expect(session.seamAnalysis()).not.toBe(tool);
+    expect(session.seamAnalysis()!.inputs.beats).toEqual(a.beats);
+    // and a report is made from the new beats: the loop's seam is still reported for the points it was asked for
+    const [r] = session.seamReport([loopA]);
+    expect(r!.hasGrid).toBe(true);
+    expect(r!.start).toBe(0);
+    expect(r!.end).toBe(16);
+    expect(r!.plan).not.toBeNull();
+  });
+
+  it('a song too short for suggestions gets no sections or candidates from the update, and a fresh model from the next report', () => {
+    const { session, analysis } = analyseChordSong({ progressions: { A: 'C G Am F C G Am F' }, structure: 'A' }); // 16 s
+    expect(analysis.skipped).toBe('short');
+    // a seam report builds the features and the harmony model (4 beats per bar) even though suggestions are skipped
+    expect(session.seamReport([{ id: 'x', start: 0, end: 8 }])[0]!.harmony).not.toBeNull();
+    const model = session.harmony!;
+    expect(model.beatsPerBar).toBe(4);
+
+    const a = session.update({ beatsPerBar: 3 });
+    expect(a.skipped).toBe('short');
+    expect(a.candidates).toEqual([]);
+    expect(a.sections).toEqual([]);
+    // the stale model is gone; asking for a report builds one for the new bar length
+    expect(session.harmony).toBeNull();
+    expect(session.seamReport([{ id: 'x', start: 0, end: 8 }])[0]!.hasGrid).toBe(true);
+    expect(session.harmony).not.toBe(model);
+    expect(session.harmony!.beatsPerBar).toBe(3);
+  });
+});
