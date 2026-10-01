@@ -60,6 +60,7 @@ import { Dropzone } from './ui/dropzone';
 import { h } from './ui/dom';
 import { ExportDialog } from './ui/exportDialog';
 import { LengthPanel } from './ui/lengthPanel';
+import { ColumnLayout } from './ui/layout';
 import { NumberField, parsePlainNumber } from './ui/numberField';
 import type { LengthMode } from './ui/lengthPanel';
 import { RegionsPanel } from './ui/regionsPanel';
@@ -334,39 +335,38 @@ export class App {
     const toolbar = h('div', { class: 'wave-toolbar' }, [
       h('span', { class: 'field grow' }, [h('label', { text: 'Zoom', attrs: { for: 'zoom-input' } }), this.zoomSlider, this.zoomField.el]),
     ]);
-    this.songPanel = h(
-      'div',
-      { class: 'song-panel', attrs: { hidden: true, 'data-testid': 'song-panel' } },
-      [
-        h('section', { class: 'card', attrs: { 'aria-label': 'Waveform' } }, [
-          toolbar,
-          this.analysisControls.el,
-          this.waveHost,
-          h('div', { class: 'wave-hint', attrs: { 'data-testid': 'wave-hint' } }, [
-            'Click to seek. Drag on the waveform to select a span, then press ',
-            h('kbd', { text: 'L' }),
-            ' to add a loop, or ',
-            h('kbd', { text: 'X' }),
-            ' to cut it out of the extended song. ',
-            h('kbd', { text: 'I' }),
-            ' and ',
-            h('kbd', { text: 'O' }),
-            ' set the start and end of the selected loop or cut (or of the selection) to the playhead. ',
-            h('kbd', { text: 'Space' }),
-            ' play/pause, ',
-            h('kbd', { text: 'Delete' }),
-            ' removes the selected loop or cut.',
-          ]),
-          this.noticeEl,
-        ]),
-        this.suggestionsPanel.el,
-        this.regionsPanel.el,
-        this.cutsPanel.el,
-        this.endingPanel.el,
-        this.lengthPanel.el,
-        this.timelineStrip.el,
-      ],
-    );
+    const waveCard = h('section', { class: 'card', attrs: { 'aria-label': 'Waveform' } }, [
+      toolbar,
+      this.analysisControls.el,
+      this.waveHost,
+      h('div', { class: 'wave-hint', attrs: { 'data-testid': 'wave-hint' } }, [
+        'Click to seek. Drag on the waveform to select a span, then press ',
+        h('kbd', { text: 'L' }),
+        ' to add a loop, or ',
+        h('kbd', { text: 'X' }),
+        ' to cut it out of the extended song. ',
+        h('kbd', { text: 'I' }),
+        ' and ',
+        h('kbd', { text: 'O' }),
+        ' set the start and end of the selected loop or cut (or of the selection) to the playhead. ',
+        h('kbd', { text: 'Space' }),
+        ' play/pause, ',
+        h('kbd', { text: 'Delete' }),
+        ' removes the selected loop or cut.',
+      ]),
+      this.noticeEl,
+    ]);
+    this.songPanel = h('div', { class: 'song-panel', attrs: { hidden: true, 'data-testid': 'song-panel' } });
+    // one column on a narrow window, two columns (SPEC-v1.3.md 4) on a wide one
+    new ColumnLayout(this.songPanel, {
+      wave: waveCard,
+      suggestions: this.suggestionsPanel.el,
+      loops: this.regionsPanel.el,
+      cuts: this.cutsPanel.el,
+      ending: this.endingPanel.el,
+      length: this.lengthPanel.el,
+      timeline: this.timelineStrip.el,
+    });
 
     this.appEl = h('div', { class: 'app' }, [
       h('header', { class: 'top' }, [

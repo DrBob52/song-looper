@@ -299,7 +299,7 @@ test('playing the extended song goes over the join: the song is shorter by the c
 });
 
 test('a cut is dragged and resized on the waveform like a loop: bars by default, Shift for free, never over a loop', async ({ page }) => {
-  await setUp(page);
+  const { duration } = await setUp(page);
   await addLoop(page, 22, 30, { smooth: false });
   await dragSelect(page, 0.2, 0.3);
   await page.keyboard.press('x');
@@ -314,6 +314,9 @@ test('a cut is dragged and resized on the waveform like a loop: bars by default,
       const r = root.querySelector<HTMLElement>(`[data-region-id="${id}"]`)!.getBoundingClientRect();
       return { x: r.x, y: r.y, w: r.width, h: r.height };
     }, c0!.id);
+  // drag distances in seconds of the song, so the test does not depend on how wide the waveform is
+  const wave = (await page.getByTestId('waveform').boundingBox())!;
+  const px = (seconds: number): number => (seconds * wave.width) / duration;
   const drag = async (fromX: number, dx: number, y: number): Promise<void> => {
     await page.mouse.move(fromX, y);
     await page.mouse.down();
@@ -323,7 +326,7 @@ test('a cut is dragged and resized on the waveform like a loop: bars by default,
   // the body: it keeps its length and its start lands on a bar line
   let r = await rect();
   const length = c0!.end - c0!.start;
-  await drag(r.x + r.w / 2, 63, r.y + r.h / 2);
+  await drag(r.x + r.w / 2, px(3), r.y + r.h / 2);
   let [c] = await cuts(page);
   expect(c!.start).toBeGreaterThan(c0!.start);
   expect(onBar(c!.start)).toBe(true);
@@ -331,20 +334,20 @@ test('a cut is dragged and resized on the waveform like a loop: bars by default,
   // the right edge (a handle): the end lands on a bar line
   r = await rect();
   const before = c!.end;
-  await drag(r.x + r.w - 3, 30, r.y + r.h / 2);
+  await drag(r.x + r.w - 3, px(3), r.y + r.h / 2);
   [c] = await cuts(page);
   expect(c!.end).toBeGreaterThan(before);
   expect(onBar(c!.end)).toBe(true);
   // Shift: free
   r = await rect();
   await page.keyboard.down('Shift');
-  await drag(r.x + r.w - 3, 17, r.y + r.h / 2);
+  await drag(r.x + r.w - 3, px(0.7), r.y + r.h / 2);
   await page.keyboard.up('Shift');
   [c] = await cuts(page);
   expect(onBar(c!.end)).toBe(false);
   // dragged up against the loop it stops at it
   r = await rect();
-  await drag(r.x + r.w / 2, 600, r.y + r.h / 2);
+  await drag(r.x + r.w / 2, px(20), r.y + r.h / 2);
   [c] = await cuts(page);
   expect(c!.end).toBeLessThanOrEqual(22 + 1e-9);
   expect(await cuts(page)).toHaveLength(1);

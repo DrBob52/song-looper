@@ -31,8 +31,10 @@ export interface EdgeEditorOptions {
 /**
  * The exact-time controls of one edge, shared by the loop rows and the cut rows:
  *
- *   Start [1:09.600]  [-beat][-10 ms][+10 ms][+beat]  [Set from playhead]
+ *   Start [1:09.600]  [Set from playhead]  [-beat][-10 ms][+10 ms][+beat]
  *
+ * (The nudges come last so that, in a half-width cell of the wide layout, the field and its button share the first line
+ * and the nudges the second.)
  * Typed values, nudges and the playhead are exact (never snapped); a refused edit shows its message under the field.
  */
 export function createEdgeEditor(o: EdgeEditorOptions): { el: HTMLElement; field: NumberField } {
@@ -74,12 +76,6 @@ export function createEdgeEditor(o: EdgeEditorOptions): { el: HTMLElement; field
   const el = h('div', { class: 'edge', attrs: { role: 'group', 'aria-label': `${label} of the ${o.noun}` } }, [
     h('label', { class: 'edge-label muted small', text: label, attrs: { for: o.fieldId } }),
     field.el,
-    h('span', { class: 'nudges' }, [
-      btn('−beat', `${label} one beat earlier`, o.testIds.beatDec, { type: 'beat', dir: -1 }, true),
-      btn('−10 ms', `${label} 10 milliseconds earlier`, o.testIds.msDec, { type: 'ms', delta: -0.01 }),
-      btn('+10 ms', `${label} 10 milliseconds later`, o.testIds.msInc, { type: 'ms', delta: 0.01 }),
-      btn('+beat', `${label} one beat later`, o.testIds.beatInc, { type: 'beat', dir: 1 }, true),
-    ]),
     h('button', {
       class: 'btn sm',
       text: 'Set from playhead',
@@ -91,6 +87,12 @@ export function createEdgeEditor(o: EdgeEditorOptions): { el: HTMLElement; field
         },
       },
     }),
+    h('span', { class: 'nudges' }, [
+      btn('−beat', `${label} one beat earlier`, o.testIds.beatDec, { type: 'beat', dir: -1 }, true),
+      btn('−10 ms', `${label} 10 milliseconds earlier`, o.testIds.msDec, { type: 'ms', delta: -0.01 }),
+      btn('+10 ms', `${label} 10 milliseconds later`, o.testIds.msInc, { type: 'ms', delta: 0.01 }),
+      btn('+beat', `${label} one beat later`, o.testIds.beatInc, { type: 'beat', dir: 1 }, true),
+    ]),
   ]);
   return { el, field };
 }

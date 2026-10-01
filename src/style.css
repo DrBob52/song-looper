@@ -1477,7 +1477,13 @@ input.nf-input:disabled {
   margin-top: 8px;
 }
 
-@media (min-width: 720px) {
+/* Actions to the right of a track once the card is wide enough (a container query: in the wide layout the card is a
+   column that is narrower than the window, in the narrow layout it is as wide as the window allows). */
+[data-testid='suggestions'] {
+  container: suggestions / inline-size;
+}
+
+@container suggestions (min-width: 640px) {
   .suggestion-main {
     grid-template-columns: 1fr auto;
     align-items: center;
@@ -1757,6 +1763,45 @@ dialog.export-dialog::backdrop {
 
 .depth-note {
   color: var(--warn-text);
+}
+
+/* ---- wide windows (SPEC-v1.3.md 4): two columns of unequal width ----
+   The waveform and the extended timeline stay full width (their width is their precision). Between them the main column
+   (3fr: Your loops, Cuts, Ending) and the side column (2fr: Suggested loops, Length) are two stacks, so each grows on its
+   own and no card is stretched to the height of its neighbour. Below 1100 px nothing here applies: one column. */
+
+@media (min-width: 1100px) {
+  .app {
+    max-width: 1480px;
+    padding-left: 24px;
+    padding-right: 24px;
+  }
+
+  .columns {
+    display: grid;
+    grid-template-columns: minmax(0, 3fr) minmax(320px, 2fr);
+    gap: 16px 24px;
+    align-items: start;
+  }
+
+  .col {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr);
+    gap: 16px;
+    align-content: start;
+    min-width: 0;
+  }
+
+  /* Start and End side by side when the card is wide enough for two (each with its field, its button and its nudges) */
+  .region-times,
+  .cut-times {
+    grid-template-columns: repeat(auto-fit, minmax(min(100%, 330px), 1fr));
+    gap: 6px 24px;
+  }
+
+  .region-times > .muted {
+    grid-column: 1 / -1;
+  }
 }
 
 /* ---- phone ---- */
