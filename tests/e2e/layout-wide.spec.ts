@@ -33,7 +33,7 @@ async function setWidth(page: Page, width: number): Promise<void> {
   await settle(page);
 }
 
-test('at 1440 px the cards sit in two columns: Your loops, Cuts and Ending on the left, Suggestions and Length on the right', async ({ page }) => {
+test('at 1440 px the cards sit in two columns: Your loops and Suggested loops on the left, Cuts, Ending and Length on the right', async ({ page }) => {
   await page.setViewportSize({ width: 1440, height: 900 });
   await loadBusyPage(page);
   await settle(page);
@@ -41,8 +41,8 @@ test('at 1440 px the cards sit in two columns: Your loops, Cuts and Ending on th
   // which card is in which column
   const inColumn = (testId: string): Promise<string[]> =>
     page.evaluate((id) => [...document.querySelector(`[data-testid=${id}]`)!.children].map((c) => c.getAttribute('aria-label') ?? ''), testId);
-  expect(await inColumn('column-main')).toEqual([LABELS.loops, LABELS.cuts, LABELS.ending]);
-  expect(await inColumn('column-side')).toEqual([LABELS.suggestions, LABELS.length]);
+  expect(await inColumn('column-main')).toEqual([LABELS.loops, LABELS.suggestions]);
+  expect(await inColumn('column-side')).toEqual([LABELS.cuts, LABELS.ending, LABELS.length]);
   // in the panel: the waveform, the columns, the extended timeline
   expect(await page.evaluate(() => [...document.querySelector('[data-testid=song-panel]')!.children].map((c) => c.getAttribute('aria-label') ?? c.getAttribute('data-testid')))).toEqual([
     LABELS.wave,
@@ -60,26 +60,28 @@ test('at 1440 px the cards sit in two columns: Your loops, Cuts and Ending on th
     timeline: await card(page, LABELS.timeline),
   };
   // the main column's cards are left of the side column's, with a gap, and never overlap them
-  for (const m of [b.loops, b.cuts, b.ending]) {
-    for (const s of [b.suggestions, b.length]) expect(m.x + m.width, 'main card right of side card left').toBeLessThan(s.x - 8);
+  for (const m of [b.loops, b.suggestions]) {
+    for (const s of [b.cuts, b.ending, b.length]) expect(m.x + m.width, 'main card right of side card left').toBeLessThan(s.x - 8);
   }
   // 3fr : 2fr
-  const ratio = b.loops.width / b.suggestions.width;
+  const ratio = b.loops.width / b.cuts.width;
   expect(ratio).toBeGreaterThan(1.35);
   expect(ratio).toBeLessThan(1.65);
-  expect(b.suggestions.width).toBeGreaterThanOrEqual(320);
-  // each column is a stack of cards, one under the other
-  expect(b.cuts.y).toBeGreaterThan(b.loops.y + b.loops.height);
+  expect(b.cuts.width).toBeGreaterThanOrEqual(320);
+  expect(b.suggestions.width).toBeCloseTo(b.loops.width, 0);
+  // each column is a stack of cards, one under the other: Suggested loops directly under Your loops (SPEC-v1.3.md 7.3)
+  expect(b.suggestions.y).toBeGreaterThan(b.loops.y + b.loops.height);
+  expect(b.suggestions.y - (b.loops.y + b.loops.height)).toBeLessThan(40);
   expect(b.ending.y).toBeGreaterThan(b.cuts.y + b.cuts.height);
-  expect(b.length.y).toBeGreaterThan(b.suggestions.y + b.suggestions.height);
-  expect(b.loops.y).toBeCloseTo(b.suggestions.y, 0);
+  expect(b.length.y).toBeGreaterThan(b.ending.y + b.ending.height);
+  expect(b.loops.y).toBeCloseTo(b.cuts.y, 0);
   // the waveform and the extended timeline are full width
   const right = (x: Box): number => x.x + x.width;
   expect(b.wave.x).toBeCloseTo(b.loops.x, 0);
   expect(right(b.wave)).toBeCloseTo(right(b.length), 0);
   expect(b.timeline.x).toBeCloseTo(b.wave.x, 0);
   expect(right(b.timeline)).toBeCloseTo(right(b.wave), 0);
-  expect(b.timeline.y).toBeGreaterThan(Math.max(b.ending.y + b.ending.height, b.length.y + b.length.height));
+  expect(b.timeline.y).toBeGreaterThan(Math.max(b.suggestions.y + b.suggestions.height, b.length.y + b.length.height));
   // cards keep their natural height: the columns are top-aligned and grow independently
   const align = await page.evaluate(() => {
     const cols = getComputedStyle(document.querySelector('[data-testid=columns]')!);
@@ -94,9 +96,15 @@ test('at 1440 px the cards sit in two columns: Your loops, Cuts and Ending on th
   const end = (await page.getByTestId('loop-end').first().boundingBox())!;
   expect(Math.abs(start.y - end.y)).toBeLessThan(6);
   expect(end.x).toBeGreaterThan(start.x + start.width);
+  // Cuts now live in the narrower side column (SPEC-v1.3.md 7.3: Cuts, Ending, Length). An edge's field, button and nudges
+  // need about 330 px, so two of them side by side need more than the 2fr column ever has (about 550 px at most): Start
+  // and End are one under the other there, each whole and inside the card.
   const cutStart = (await page.getByTestId('cut-start').first().boundingBox())!;
   const cutEnd = (await page.getByTestId('cut-end').first().boundingBox())!;
-  expect(Math.abs(cutStart.y - cutEnd.y)).toBeLessThan(6);
+  expect(cutEnd.y).toBeGreaterThan(cutStart.y + 20);
+  expect(Math.abs(cutEnd.x - cutStart.x)).toBeLessThan(6);
+  const cutCard = await card(page, LABELS.cuts);
+  expect(cutEnd.x + cutEnd.width).toBeLessThanOrEqual(cutCard.x + cutCard.width);
   expect(await page.evaluate(() => document.documentElement.scrollWidth <= document.documentElement.clientWidth)).toBe(true);
 });
 
@@ -112,15 +120,15 @@ test('at 1099 px it is one column again, in the single-column order; resizing ac
   await expect(page.getByTestId('columns')).toHaveCount(0);
   expect(await page.evaluate(() => [...document.querySelector('[data-testid=song-panel]')!.children].map((c) => c.getAttribute('aria-label')))).toEqual([
     LABELS.wave,
-    LABELS.suggestions,
     LABELS.loops,
+    LABELS.suggestions,
     LABELS.cuts,
     LABELS.ending,
     LABELS.length,
     LABELS.timeline,
   ]);
   const boxes = [];
-  for (const label of Object.values(LABELS)) boxes.push(await card(page, label));
+  for (const label of [LABELS.wave, LABELS.loops, LABELS.suggestions, LABELS.cuts, LABELS.ending, LABELS.length, LABELS.timeline]) boxes.push(await card(page, label));
   for (let i = 1; i < boxes.length; i++) {
     expect(boxes[i]!.y, `card ${i} under card ${i - 1}`).toBeGreaterThan(boxes[i - 1]!.y + boxes[i - 1]!.height - 1);
     expect(boxes[i]!.x).toBeCloseTo(boxes[0]!.x, 0);

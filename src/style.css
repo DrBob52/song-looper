@@ -1493,6 +1493,56 @@ input.nf-input:disabled {
   color: var(--ink-soft);
 }
 
+/* a collapsible card (Suggested loops): its heading is a disclosure button, a chevron and the title with its count. A
+   closed card is only its header. The chevron points right when closed and down when open. */
+.disclosure {
+  appearance: none;
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  min-height: 32px;
+  margin: -4px 0;
+  padding: 2px 8px 2px 0;
+  border: 0;
+  border-radius: 4px;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  font-stretch: inherit;
+  letter-spacing: inherit;
+  text-transform: inherit;
+  text-shadow: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+
+.disclosure:hover {
+  color: var(--ink);
+}
+
+.disclosure:hover .disclosure-text {
+  text-decoration: underline;
+  text-underline-offset: 3px;
+}
+
+.chevron {
+  flex: none;
+  width: 7px;
+  height: 7px;
+  border-right: 2px solid currentColor;
+  border-bottom: 2px solid currentColor;
+  transform: rotate(-45deg);
+  transition: transform 0.15s ease;
+}
+
+.disclosure[aria-expanded='true'] .chevron {
+  transform: translateY(-2px) rotate(45deg);
+}
+
+.card.collapsed > .card-head {
+  margin-bottom: 0;
+}
+
 .suggestion-list {
   list-style: none;
   margin: 0;
@@ -1867,8 +1917,9 @@ dialog.export-dialog::backdrop {
 
 /* ---- wide windows (SPEC-v1.3.md 4): two columns of unequal width ----
    The waveform and the extended timeline stay full width (their width is their precision). Between them the main column
-   (3fr: Your loops, Cuts, Ending) and the side column (2fr: Suggested loops, Length) are two stacks, so each grows on its
-   own and no card is stretched to the height of its neighbour. Below 1100 px nothing here applies: one column. */
+   (3fr: Your loops, then Suggested loops directly under it) and the side column (2fr: Cuts, Ending, Length) are two stacks,
+   so each grows on its own and no card is stretched to the height of its neighbour. Below 1100 px nothing here applies:
+   one column. */
 
 @media (min-width: 1100px) {
   .app {

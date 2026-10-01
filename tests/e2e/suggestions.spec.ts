@@ -94,3 +94,101 @@ test('a very short song skips suggestions', async ({ page }) => {
   await expect(page.getByTestId('suggestions-note')).toContainText('under 20 seconds');
   await expect(page.getByTestId('suggestion')).toHaveCount(0);
 });
+
+// SPEC-v1.3.md 7.3: the card is collapsible, with a count in its toggle, and the choice is remembered.
+
+test('the Suggested loops toggle shows the count, collapses the card to its header, and the choice survives a reload', async ({ page }) => {
+  const errors: string[] = [];
+  page.on('pageerror', (e) => errors.push(e.message));
+  const fixture = await makeFixture({ structure: 'ABABCA', barsPerSection: 4 });
+  await loadFixture(page, fixture);
+  await waitForAnalysis(page);
+  const cands = await appState<Cand[]>(page, 's.analysis.candidates');
+  const toggle = page.getByTestId('suggestions-toggle');
+  const card = page.getByTestId('suggestions');
+  await expect(toggle).toHaveText(`Suggested loops (${cands.length})`);
+  // open by default; the toggle names the region it controls
+  await expect(toggle).toHaveAttribute('aria-expanded', 'true');
+  const controls = await toggle.getAttribute('aria-controls');
+  expect(controls).toBeTruthy();
+  expect(await page.evaluate((id) => document.getElementById(id!)?.contains(document.querySelector('[data-testid=suggestion]')), controls)).toBe(true);
+  await expect(page.getByTestId('suggestion').first()).toBeVisible();
+  const openHeight = (await card.boundingBox())!.height;
+
+  // collapsed: only the header, none of the rows or buttons
+  await toggle.click();
+  await expect(toggle).toHaveAttribute('aria-expanded', 'false');
+  await expect(toggle).toHaveText(`Suggested loops (${cands.length})`);
+  await expect(page.getByTestId('suggestion').first()).toBeHidden();
+  await expect(page.getByTestId('suggestions-more')).toBeHidden();
+  await expect(page.getByTestId('suggestion-add').first()).toBeHidden();
+  const closedHeight = (await card.boundingBox())!.height;
+  expect(closedHeight).toBeLessThan(80);
+  expect(closedHeight).toBeLessThan(openHeight / 3);
+  expect(await page.evaluate(() => localStorage.getItem('song-looper-suggestions-open'))).toBe('0');
+
+  // remembered: a fresh page load comes up collapsed, with the same count
+  await loadFixture(page, fixture);
+  await waitForAnalysis(page);
+  await expect(toggle).toHaveAttribute('aria-expanded', 'false');
+  await expect(toggle).toHaveText(`Suggested loops (${cands.length})`);
+  await expect(page.getByTestId('suggestion').first()).toBeHidden();
+
+  // the keyboard works: Enter and Space on the focused toggle
+  await toggle.focus();
+  await page.keyboard.press('Enter');
+  await expect(toggle).toHaveAttribute('aria-expanded', 'true');
+  await expect(page.getByTestId('suggestion').first()).toBeVisible();
+  await page.keyboard.press('Space');
+  await expect(toggle).toHaveAttribute('aria-expanded', 'false');
+  await page.keyboard.press('Space');
+  await expect(toggle).toHaveAttribute('aria-expanded', 'true');
+  expect(await page.evaluate(() => localStorage.getItem('song-looper-suggestions-open'))).toBe('1');
+  // everything in the list still works after the card was closed and opened: add the first one
+  await page.getByTestId('suggestion-add').first().click();
+  await expect(page.locator('[data-testid=regions] li')).toHaveCount(1);
+  await expect(page.getByTestId('suggestion-add').first()).toHaveText('Added');
+  // opening again after a reload comes up open
+  await loadFixture(page, fixture);
+  await expect(toggle).toHaveAttribute('aria-expanded', 'true');
+  expect(errors).toEqual([]);
+});
+
+test('while the song is analysed the toggle reads Finding loops… and still works; the count arrives afterwards', async ({ page }) => {
+  const fixture = await makeFixture({ structure: 'ABABCA', barsPerSection: 16 });
+  await loadFixture(page, fixture);
+  const toggle = page.getByTestId('suggestions-toggle');
+  await expect(toggle).toHaveText('Finding loops…');
+  await toggle.click();
+  await expect(toggle).toHaveAttribute('aria-expanded', 'false');
+  await expect(page.getByTestId('suggestions-note')).toBeHidden();
+  await toggle.click();
+  await expect(toggle).toHaveAttribute('aria-expanded', 'true');
+  await expect(toggle).toHaveText('Finding loops…');
+  await waitForAnalysis(page);
+  await expect(toggle).toHaveText(/^Suggested loops \(\d+\)$/);
+  await expect(page.getByTestId('suggestion').first()).toBeVisible();
+});
+
+test('with storage blocked the card is open and the toggle still works', async ({ page }) => {
+  await page.addInitScript(() => {
+    Object.defineProperty(window, 'localStorage', {
+      get() {
+        throw new Error('blocked');
+      },
+    });
+  });
+  const errors: string[] = [];
+  page.on('pageerror', (e) => errors.push(e.message));
+  const fixture = await makeFixture({ structure: 'ABABCA', barsPerSection: 4 });
+  await loadFixture(page, fixture);
+  await waitForAnalysis(page);
+  const toggle = page.getByTestId('suggestions-toggle');
+  await expect(toggle).toHaveAttribute('aria-expanded', 'true');
+  await toggle.click();
+  await expect(toggle).toHaveAttribute('aria-expanded', 'false');
+  await expect(page.getByTestId('suggestion').first()).toBeHidden();
+  await toggle.click();
+  await expect(page.getByTestId('suggestion').first()).toBeVisible();
+  expect(errors).toEqual([]);
+});

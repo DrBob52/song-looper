@@ -85,6 +85,14 @@ for (const look of LOOKS) {
         await settle(page);
         problems.push(...(await auditPage(page, `${look.skin} ${mode} ${width}px loaded, panels open`)));
       }
+      // Suggested loops collapsed to its header (SPEC-v1.3.md 7.3): the toggle and the cards around it still clear each other
+      await page.getByTestId('suggestions-toggle').click();
+      await expect(page.getByTestId('suggestions-toggle')).toHaveAttribute('aria-expanded', 'false');
+      for (const width of WIDTHS) {
+        await page.setViewportSize({ width, height: 800 });
+        await settle(page);
+        problems.push(...(await auditPage(page, `${look.skin} ${mode} ${width}px loaded, suggestions collapsed`)));
+      }
       await context.close();
     }
     expect(problems).toEqual([]);

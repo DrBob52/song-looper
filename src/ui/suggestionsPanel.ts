@@ -25,6 +25,36 @@ export interface SuggestionsView {
 
 const VISIBLE_DEFAULT = 8;
 
+/** Where the open/closed choice of the card is kept (localStorage; storage can be missing or blocked, then it is open). */
+export const SUGGESTIONS_OPEN_KEY = 'song-looper-suggestions-open';
+
+/** Was the card left open last time? Open by default, and whenever storage cannot be read. */
+export function loadSuggestionsOpen(): boolean {
+  try {
+    return localStorage.getItem(SUGGESTIONS_OPEN_KEY) !== '0';
+  } catch {
+    return true;
+  }
+}
+
+export function saveSuggestionsOpen(open: boolean): void {
+  try {
+    localStorage.setItem(SUGGESTIONS_OPEN_KEY, open ? '1' : '0');
+  } catch {
+    /* private window or blocked storage: the choice just is not remembered */
+  }
+}
+
+/**
+ * The text of the card's toggle: `Suggested loops (12)` once the analysis is in, `Finding loops…` while it runs, and just
+ * `Suggested loops` when there is nothing to count (no song yet, or the analysis failed).
+ */
+export function suggestionsHeading(view: Pick<SuggestionsView, 'analysis' | 'running'>): string {
+  if (view.running) return 'Finding loops\u2026';
+  if (view.analysis) return `Suggested loops (${view.analysis.candidates.length})`;
+  return 'Suggested loops';
+}
+
 export const suggestionKey = (index: number): string => `sug-${index}`;
 
 export function starString(stars: number): string {
@@ -35,20 +65,48 @@ export function starString(stars: number): string {
 export class SuggestionsPanel {
   readonly el: HTMLElement;
   private body: HTMLElement;
+  private toggle: HTMLButtonElement;
+  private toggleText: HTMLElement;
   private showAll = false;
+  private open: boolean;
 
   constructor(private cb: SuggestionsCallbacks) {
-    this.body = h('div');
+    this.open = loadSuggestionsOpen();
+    this.body = h('div', { class: 'suggestions-body', attrs: { id: 'suggestions-body' } });
+    this.toggleText = h('span', { class: 'disclosure-text', text: 'Suggested loops' });
+    // a disclosure button in the heading: a chevron and "Suggested loops (12)"; collapsed, only this header shows
+    this.toggle = h(
+      'button',
+      {
+        class: 'disclosure',
+        attrs: { type: 'button', 'aria-controls': 'suggestions-body', 'aria-expanded': String(this.open), 'data-testid': 'suggestions-toggle' },
+        on: { click: () => this.setOpen(!this.open) },
+      },
+      [h('span', { class: 'chevron', attrs: { 'aria-hidden': 'true' } }), this.toggleText],
+    );
     this.el = h('section', { class: 'card', attrs: { 'aria-label': 'Suggested loops', 'data-testid': 'suggestions' } }, [
-      h('div', { class: 'card-head' }, [
-        h('h2', { text: 'Suggested loops' }),
-        h('span', { class: 'side-tag mono small', text: 'SIDE A' }),
-      ]),
+      h('div', { class: 'card-head' }, [h('h2', {}, [this.toggle]), h('span', { class: 'side-tag mono small', text: 'SIDE A' })]),
       this.body,
     ]);
+    this.el.classList.toggle('collapsed', !this.open);
+    this.body.hidden = !this.open;
+  }
+
+  get isOpen(): boolean {
+    return this.open;
+  }
+
+  /** Open or close the card (remembered for next time). The analysis keeps running either way. */
+  setOpen(open: boolean): void {
+    this.open = open;
+    saveSuggestionsOpen(open);
+    this.toggle.setAttribute('aria-expanded', String(open));
+    this.el.classList.toggle('collapsed', !open);
+    this.body.hidden = !open;
   }
 
   update(view: SuggestionsView): void {
+    this.toggleText.textContent = suggestionsHeading(view);
     clear(this.body);
     const a = view.analysis;
     const note = (text: string, cls = 'muted small'): void => {
