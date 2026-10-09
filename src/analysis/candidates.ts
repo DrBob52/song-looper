@@ -167,14 +167,21 @@ export interface LoopScore {
   components: CandidateComponents;
 }
 
-/** The candidate score of the beat range [a, b) (a < b, whole bars or not): seam, structure, energy, length. */
-export function scoreLoop(ctx: LoopScoreContext, a: number, b: number, beatsPerBar: number): LoopScore {
+/** How well the jump from beat b - 1 back to beat a sounds: the context match, the harmony and their weighted mean. */
+export function seamOfLoop(ctx: LoopScoreContext, a: number, b: number): { seam: number; contextMatch: number; harmony?: number } {
   const cfg = ctx.cfg ?? ANALYSIS_CONFIG.candidates;
-  const w = cfg.weights;
   const context = contextMatch(ctx.ssm, a, b, cfg.contextBeats);
   const harmony = ctx.harmony ? loopHarmony(ctx.harmony, a, b) : undefined;
   const seam =
     harmony === undefined ? context : cfg.seamContextWeight * context + cfg.seamHarmonyWeight * harmony;
+  return harmony === undefined ? { seam, contextMatch: context } : { seam, contextMatch: context, harmony };
+}
+
+/** The candidate score of the beat range [a, b) (a < b, whole bars or not): seam, structure, energy, length. */
+export function scoreLoop(ctx: LoopScoreContext, a: number, b: number, beatsPerBar: number): LoopScore {
+  const cfg = ctx.cfg ?? ANALYSIS_CONFIG.candidates;
+  const w = cfg.weights;
+  const { seam, contextMatch: context, harmony } = seamOfLoop(ctx, a, b);
   const structure = structureScore(a, b, ctx.boundaries, cfg);
   const energy = energyContinuity(ctx.features.loudness, a, b, cfg.energyDbRange);
   const length = lengthPreference(Math.round((b - a) / beatsPerBar), cfg);

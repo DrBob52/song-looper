@@ -173,6 +173,26 @@ export const ANALYSIS_CONFIG = {
     starThresholds: [0.3, 0.45, 0.6, 0.75],
   },
 
+  /**
+   * SPEC-v1.4.md 2: the whole-song loop. Its start `a` is a bar start in the first `startWindow` of the song and its
+   * end `b` a bar start in the last `endWindow` (each the smaller of the fraction of the song and the seconds), and
+   * it keeps at least `minCoverage` of the song. The seam, structure and energy terms are the ones the suggestions
+   * use (config `candidates` and `harmony`); coverage is (b - a) / duration. No two options may be within `nmsBars`
+   * bars of each other at both edges; the best `maxOptions` are kept.
+   */
+  wholeSong: {
+    startWindowFraction: 0.3,
+    startWindowSeconds: 90,
+    endWindowFraction: 0.3,
+    endWindowSeconds: 90,
+    minCoverage: 0.6,
+    weights: { seam: 0.45, structure: 0.25, energy: 0.15, coverage: 0.15 },
+    nmsBars: 2,
+    maxOptions: 3,
+    /** Stars: score thresholds for 1..5 stars (ascending). */
+    starThresholds: [0.3, 0.45, 0.6, 0.75],
+  },
+
   /** SPEC-seams.md 3: how a seam is scored (and later smoothed). */
   seam: {
     /** Seam quality: harmony is what the user hears, so it gets half the weight (SPEC-seams.md 3.5). */

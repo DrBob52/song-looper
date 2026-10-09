@@ -11,6 +11,7 @@ import { SeamAnalyzer, chipFor, nearestBeat } from './seam';
 import { findBridge } from './bridge';
 import { planBridge } from './bridgePlan';
 import { findNearbyLoop } from './nearby';
+import { findWholeSongLoops } from './wholeSong';
 import { smoothSeam } from './smooth';
 import { findSections } from './sections';
 import { selfSimilarity } from './ssm';
@@ -18,7 +19,17 @@ import type { SelfSimilarity } from './ssm';
 import { estimateTempo } from './tempo';
 import type { TempoResult } from './tempo';
 import type { SeamPlan } from '../model';
-import type { Analysis, AnalysisStage, AnalysisUpdate, LoopCandidate, NearbyLoop, Section, SeamReport, SeamRequest } from './types';
+import type {
+  Analysis,
+  AnalysisStage,
+  AnalysisUpdate,
+  LoopCandidate,
+  NearbyLoop,
+  Section,
+  SeamReport,
+  SeamRequest,
+  WholeSongOption,
+} from './types';
 
 export type ProgressFn = (stage: AnalysisStage, pct: number) => void;
 
@@ -52,6 +63,7 @@ export class AnalysisSession {
   private harmonyModel: HarmonyModel | null = null;
   private sections: Section[] = [];
   private candidates: LoopCandidate[] = [];
+  private wholeSong: WholeSongOption[] = [];
   private seamAnalyzer: SeamAnalyzer | null = null;
   /** Beat indices that start a section (empty when there are no sections). */
   private sectionBoundaries: number[] = [];
@@ -297,6 +309,7 @@ export class AnalysisSession {
   private computeStructure(progress: ProgressFn): void {
     this.sections = [];
     this.candidates = [];
+    this.wholeSong = [];
     this.sectionBoundaries = [];
     // A short song only has features because a seam report built them: it still gets no sections or suggestions.
     if (!this.canSuggest() || !this.features || !this.ssm) return;
@@ -326,6 +339,19 @@ export class AnalysisSession {
       boundaries,
       duration: this.duration,
       harmony: this.harmonyModel,
+    });
+    progress('candidates', 0.8);
+    this.wholeSong = findWholeSongLoops({
+      ssm: this.ssm,
+      features: this.features,
+      beats: this.beatTimes,
+      barBeats,
+      beatsPerBar: this.beatsPerBar,
+      sections,
+      boundaries,
+      duration: this.duration,
+      harmony: this.harmonyModel,
+      steadyBeat: this.hasSteadyBeat(),
     });
     progress('candidates', 1);
   }
@@ -377,6 +403,7 @@ export class AnalysisSession {
       barPhase: this.silent || !enoughBeats ? 0 : this.barPhase(),
       sections: this.sections,
       candidates: this.candidates,
+      wholeSong: this.wholeSong,
       duration: this.duration,
       beatConfidence: confidence,
       steadyBeat: steady,

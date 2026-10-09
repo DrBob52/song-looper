@@ -36,6 +36,37 @@ export interface LoopCandidate {
   stars: number;
 }
 
+export interface WholeSongComponents {
+  /** The seam score the suggestions use: context match and harmony of the jump from b - 1 back to a. */
+  seam: number;
+  /** 1 when both edges sit on section boundaries, 0.5 when one does. */
+  structure: number;
+  energy: number;
+  /** (end - start) / duration. */
+  coverage: number;
+  contextMatch: number;
+  /** Does the song itself make this chord change? 0 (never) to 1 (yes). */
+  harmony?: number;
+}
+
+/** A way to loop the whole song: from just before the outro back to just after the intro (SPEC-v1.4.md 2). */
+export interface WholeSongOption {
+  /** Seconds, on beat times. */
+  start: number;
+  end: number;
+  startBeat: number;
+  endBeat: number;
+  bars: number;
+  score: number;
+  components: WholeSongComponents;
+  /** Seconds of the song before `start` and after `end`, which each repeat skips. */
+  skipsIntro: number;
+  skipsOutro: number;
+  reason: string;
+  /** 1..5 */
+  stars: number;
+}
+
 export interface Analysis {
   bpm: number;
   bpmAlt: number;
@@ -46,6 +77,8 @@ export interface Analysis {
   barPhase: number;
   sections: Section[];
   candidates: LoopCandidate[];
+  /** Ways to loop the whole song, best first (empty for a short song or one without a steady beat). */
+  wholeSong: WholeSongOption[];
 
   // Additions beyond the spec'd shape:
   duration: number;
