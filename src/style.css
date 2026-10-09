@@ -1446,6 +1446,142 @@ input.nf-input:disabled {
   gap: 2px 8px;
 }
 
+/* ---- loop the whole song: the inline panel in Your loops, and the label on its loop (SPEC-v1.4.md 3) ---- */
+
+.whole-panel {
+  margin: 0 0 14px;
+  padding: 12px 14px;
+  border: 1px solid var(--rule);
+  border-left: 4px solid var(--label-red);
+  border-radius: 6px;
+  background: var(--paper);
+  min-width: 0;
+}
+
+.whole-panel[hidden] {
+  display: none;
+}
+
+.whole-intro,
+.whole-note {
+  margin: 0 0 8px;
+  color: var(--ink-soft);
+}
+
+.whole-note {
+  margin: 0;
+  color: var(--ink);
+}
+
+.whole-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: grid;
+  gap: 0;
+}
+
+.whole-option {
+  display: grid;
+  gap: 2px;
+  padding: 10px 0;
+  border-top: 1px solid var(--rule);
+  min-width: 0;
+}
+
+.whole-option:last-child {
+  padding-bottom: 0;
+}
+
+.whole-title {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 2px 14px;
+}
+
+.whole-name {
+  font-family: var(--font-display);
+  font-weight: 800;
+  font-stretch: 112%;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  font-size: 0.95rem;
+  /* ink, not the accent: the panel sits on the page's own colour, where some looks' accent is under 4.5:1 */
+  color: var(--ink);
+}
+
+/* the option's mark: a record label dot in the look's accent (decoration only: the name carries the meaning in ink) */
+.whole-name::before {
+  content: '';
+  display: inline-block;
+  width: 0.5em;
+  height: 0.5em;
+  margin-right: 0.45em;
+  border-radius: 50%;
+  background: var(--label-red);
+  vertical-align: 0.08em;
+}
+
+.whole-panel .stars {
+  color: var(--ink);
+}
+
+.whole-title .times {
+  font-weight: 600;
+}
+
+.whole-skips,
+.whole-reason {
+  color: var(--ink-soft);
+}
+
+.whole-conflict {
+  color: var(--warn-text);
+  font-family: var(--font-mono);
+}
+
+.whole-conflict.blocked {
+  color: var(--bad-text);
+}
+
+.whole-actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 2px 4px;
+  margin-left: -9px;
+}
+
+.whole-ask {
+  padding-left: 9px;
+  margin-right: 4px;
+  font-weight: 600;
+}
+
+/* the label on a whole-song loop's card */
+.whole-tag {
+  display: inline-flex;
+  align-items: center;
+  padding: 1px 9px;
+  border: 1.5px solid var(--ink);
+  border-radius: 999px;
+  color: var(--ink);
+  font-family: var(--font-display);
+  font-weight: 700;
+  font-stretch: 112%;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  /* on a 320 px phone the card's title column is narrower than the words: the label wraps rather than run under the play button */
+  min-width: 0;
+  max-width: 100%;
+  text-align: center;
+}
+
+.whole-tag[hidden] {
+  display: none;
+}
+
 .bridge-status,
 .bridge-hint {
   color: var(--ink-soft);

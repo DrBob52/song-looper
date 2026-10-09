@@ -2,7 +2,7 @@ import { expect, test } from './fixtures';
 import type { Page } from '@playwright/test';
 import { SKINS } from '../../src/ui/skins';
 import type { SkinId } from '../../src/ui/skins';
-import { auditLoopDialog, auditPage, loadBusyPage, settle } from './overlap';
+import { auditLoopDialog, auditPage, auditWholeSong, loadBusyPage, settle } from './overlap';
 import { fontsDir, loadedFamilies, useRealFonts } from './realFonts';
 
 // The overlap guard again, with the real fonts instead of the fallbacks: the layout is only known to be right if it is
@@ -54,6 +54,8 @@ for (const skin of SKINS) {
         await settle(page);
         problems.push(...(await auditLoopDialog(page, `${skin.id} ${mode} ${width}px, real fonts, Export loop dialog`)));
       }
+      // and Loop the whole song (SPEC-v1.4.md 3)
+      problems.push(...(await auditWholeSong(page, `${skin.id} ${mode}, real fonts`, [320, 768, 2560])));
       await context.close();
     }
     expect(problems).toEqual([]);

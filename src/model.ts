@@ -82,6 +82,12 @@ export interface LoopRegion {
   exact?: boolean;
   /** Play a bridge of 1 to 4 bars after the loop end before jumping back (opt-in, default off). */
   bridge?: boolean;
+  /**
+   * The loop came from "Loop the whole song" (SPEC-v1.4.md 3): it covers almost the whole song, so each repeat is a full
+   * play and the card says "Plays". It stays an ordinary loop; the card only drops the label once it no longer covers
+   * enough of the song (`isWholeSong`).
+   */
+  wholeSong?: boolean;
   /** What the seam smoother decided for the loop's current points (see SeamPlan). */
   seam?: SeamPlan;
 }

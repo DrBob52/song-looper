@@ -1,3 +1,4 @@
+import { ANALYSIS_CONFIG } from './analysis/config';
 import type { Cut, Ending, LoopRegion, SeamPlan, Span } from './model';
 import { MAX_FADE_SECONDS, REGION_COLORS } from './model';
 import { formatClock } from './util/time';
@@ -90,6 +91,33 @@ export function sortCuts(cuts: readonly Cut[]): Cut[] {
 /** Is `span` overlapping any region? */
 export function overlapsAny(regions: readonly Occupied[], span: Span, excludeId?: string): boolean {
   return regions.some((r) => r.id !== excludeId && r.start < span.end - 1e-9 && r.end > span.start + 1e-9);
+}
+
+// ---------------------------------------------------------------------------
+// The whole-song loop (SPEC-v1.4.md 3)
+// ---------------------------------------------------------------------------
+
+/** Is this loop a whole-song loop: made by "Loop the whole song" and still covering most of the song? */
+export function isWholeSong(region: Pick<LoopRegion, 'start' | 'end' | 'wholeSong'>, duration: number): boolean {
+  return region.wholeSong === true && duration > 0 && (region.end - region.start) / duration >= ANALYSIS_CONFIG.wholeSong.minCoverage - 1e-6;
+}
+
+/** What a whole-song loop over `span` would collide with. Loops it would replace, and cuts that block it. */
+export interface WholeSongConflicts {
+  /** Loops inside or overlapping the span, in song order, with their 1-based numbers as the Your loops card shows them. */
+  loops: { number: number; region: LoopRegion }[];
+  /** Cuts inside or overlapping the span, in song order. A cut inside the span is refused, never removed. */
+  cuts: Cut[];
+}
+
+export function wholeSongConflicts(span: Span, regions: readonly LoopRegion[], cuts: readonly Cut[]): WholeSongConflicts {
+  const hits = (r: Span): boolean => r.start < span.end - 1e-6 && r.end > span.start + 1e-6;
+  return {
+    loops: sortRegions(regions)
+      .map((region, i) => ({ number: i + 1, region }))
+      .filter((l) => hits(l.region)),
+    cuts: sortCuts(cuts).filter(hits),
+  };
 }
 
 // ---------------------------------------------------------------------------

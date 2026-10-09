@@ -1,6 +1,6 @@
 import { expect, test } from './fixtures';
 import type { Page } from '@playwright/test';
-import { auditLoopDialog, auditPage, loadBusyPage, settle } from './overlap';
+import { auditLoopDialog, auditPage, auditWholeSong, loadBusyPage, settle } from './overlap';
 
 // SPEC-v1.3.md section 1: nothing overlaps, nothing sticks out of its card, the turntable bar is hidden until a song is
 // in and never covers a card at the bottom of the page. The guard itself is in overlap.ts.
@@ -116,6 +116,8 @@ for (const look of LOOKS) {
         await settle(page);
         problems.push(...(await auditLoopDialog(page, `${look.skin} ${mode} ${width}px, Export loop dialog`)));
       }
+      // Loop the whole song (SPEC-v1.4.md 3): the panel, its messages, the confirmation and the loop it adds
+      problems.push(...(await auditWholeSong(page, `${look.skin} ${mode}`, WIDTHS)));
       await context.close();
     }
     expect(problems).toEqual([]);

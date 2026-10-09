@@ -11,6 +11,8 @@ import { holdRepeat } from './holdRepeat';
 import { loopCss, loopInkCss } from './loopColors';
 import { NumberField, parsePlainNumber } from './numberField';
 import { chipLabel, chipTitle, seamSummary } from './seamText';
+import { WholeSongPanel } from './wholeSongPanel';
+import type { WholeSongView } from './wholeSongPanel';
 
 export type { Edge, EdgeEdit } from './edgeEditor';
 
@@ -43,6 +45,10 @@ export interface RegionsPanelCallbacks {
   onNearbyUse(id: string): void;
   onRemove(id: string): void;
   onHover(id: string | null): void;
+  /** Loop the whole song (SPEC-v1.4.md 3): hear the jump of option `index`, add it as a loop, show its span on the waveform. */
+  onWholeSongAudition(index: number): void;
+  onWholeSongUse(index: number): void;
+  onWholeSongHover(index: number | null): void;
 }
 
 export interface RegionsPanelInfo {
@@ -61,6 +67,8 @@ export interface RegionsPanelInfo {
   nearbyOf(region: LoopRegion): NearbyLoop | null;
   /** The outcome of the bridge search for a loop (null: no report for the current switches yet). */
   bridgeOf(region: LoopRegion): SeamReport['bridge'];
+  /** A whole-song loop (SPEC-v1.4.md 3): each repeat is a full play, so the card says "Plays". */
+  wholeSongOf(region: LoopRegion): boolean;
 }
 
 interface Row {
@@ -69,6 +77,8 @@ interface Row {
   labelNum: HTMLElement;
   labelReps: HTMLElement;
   title: HTMLElement;
+  wholeTag: HTMLElement;
+  repeatsText: HTMLElement;
   start: NumberField;
   end: NumberField;
   beatButtons: HTMLButtonElement[];
@@ -100,6 +110,7 @@ export class RegionsPanel {
   private empty: HTMLElement;
   private addBtn: HTMLButtonElement;
   private cutBtn: HTMLButtonElement;
+  private wholeSong: WholeSongPanel;
   private rows = new Map<string, Row>();
 
   constructor(private cb: RegionsPanelCallbacks) {
@@ -119,6 +130,11 @@ export class RegionsPanel {
       },
       on: { click: () => this.cb.onCutSelection() },
     });
+    this.wholeSong = new WholeSongPanel({
+      onAudition: (i) => this.cb.onWholeSongAudition(i),
+      onUse: (i) => this.cb.onWholeSongUse(i),
+      onHover: (i) => this.cb.onWholeSongHover(i),
+    });
     this.empty = h('p', {
       class: 'muted small',
       text: 'No loops yet. Drag on the waveform to select a span, then press L or use Add loop.',
@@ -126,7 +142,8 @@ export class RegionsPanel {
     });
     this.list = h('ul', { class: 'region-list', attrs: { 'data-testid': 'regions' } });
     this.el = h('section', { class: 'card', attrs: { 'aria-label': 'Loop regions' } }, [
-      h('div', { class: 'card-head' }, [h('h2', { text: 'Your loops' }), h('div', { class: 'card-actions' }, [this.cutBtn, this.addBtn])]),
+      h('div', { class: 'card-head' }, [h('h2', { text: 'Your loops' }), h('div', { class: 'card-actions' }, [this.cutBtn, this.wholeSong.button, this.addBtn])]),
+      this.wholeSong.el,
       this.empty,
       this.list,
     ]);
@@ -135,6 +152,11 @@ export class RegionsPanel {
   setEnabled(enabled: boolean): void {
     this.addBtn.disabled = !enabled;
     this.cutBtn.disabled = !enabled;
+  }
+
+  /** The options of "Loop the whole song" (the panel is only drawn while it is open). */
+  updateWholeSong(view: WholeSongView): void {
+    this.wholeSong.update(view);
   }
 
   update(regions: LoopRegion[], selectedId: string | null, info: RegionsPanelInfo): void {
@@ -164,6 +186,14 @@ export class RegionsPanel {
       row.labelNum.textContent = String(index + 1);
       row.labelReps.textContent = `\u00d7${region.repeats}`;
       row.title.textContent = `Loop ${index + 1}`;
+      // a whole-song loop plays the whole song each time: its repeats are plays
+      const whole = info.wholeSongOf(region);
+      row.wholeTag.hidden = !whole;
+      row.el.classList.toggle('whole-song', whole);
+      row.repeatsText.textContent = whole ? 'Plays' : 'Repeats';
+      row.repeats.input.setAttribute('aria-label', whole ? 'Play count' : 'Repeat count');
+      row.dec.setAttribute('aria-label', whole ? 'Fewer plays' : 'Fewer repeats');
+      row.inc.setAttribute('aria-label', whole ? 'More plays' : 'More repeats');
       row.start.setValue(roundMs(region.start));
       row.end.setValue(roundMs(region.end));
       for (const b of row.beatButtons) b.hidden = !info.steadyBeat;
@@ -227,6 +257,12 @@ export class RegionsPanel {
     const labelReps = h('span', { class: 'label-reps mono' });
     const label = h('span', { class: 'loop-label', attrs: { 'aria-hidden': 'true' } }, [labelNum, labelReps]);
     const title = h('strong');
+    const wholeTag = h('span', {
+      class: 'whole-tag small',
+      text: 'Whole song',
+      attrs: { hidden: true, 'data-testid': 'whole-song-tag', title: 'This loop covers almost the whole song: each play is the song from just after the intro to just before the outro' },
+    });
+    const repeatsText = h('span', { text: 'Repeats' });
     const meta = h('span', { class: 'muted small mono', attrs: { 'data-testid': 'loop-length' } });
     const exactNotice = h('div', {
       class: 'exact-notice small',
@@ -398,11 +434,11 @@ export class RegionsPanel {
         label,
         loopBtn,
         h('div', { class: 'region-main' }, [
-          h('div', { class: 'region-title' }, [title, seam]),
+          h('div', { class: 'region-title' }, [title, wholeTag, seam]),
           h('div', { class: 'region-times' }, [startEdge.el, endEdge.el, meta]),
           exactNotice,
           h('div', { class: 'region-settings' }, [
-            h('span', { class: 'field' }, [h('span', { text: 'Repeats' }), dec, repeats.el, inc]),
+            h('span', { class: 'field' }, [repeatsText, dec, repeats.el, inc]),
             h('label', { class: 'field' }, [snap, h('span', { text: 'Snap to bars' })]),
             h('label', { class: 'field', attrs: { title: 'Move the seam by up to a beat, line up the end, pick the fade and match levels' } }, [
               smooth,
@@ -425,7 +461,7 @@ export class RegionsPanel {
         ]),
       ],
     );
-    return { el, label, labelNum, labelReps, title, start: startEdge.field, end: endEdge.field, beatButtons, meta, exactNotice, repeats, dec, inc, snap, loopBtn, loopLabel, seam, chip, smooth, summary, summaryText, undo, nearby, nearbyText, bridge, bridgeStatus, bridgeHint };
+    return { el, label, labelNum, labelReps, title, wholeTag, repeatsText, start: startEdge.field, end: endEdge.field, beatButtons, meta, exactNotice, repeats, dec, inc, snap, loopBtn, loopLabel, seam, chip, smooth, summary, summaryText, undo, nearby, nearbyText, bridge, bridgeStatus, bridgeHint };
   }
 }
 

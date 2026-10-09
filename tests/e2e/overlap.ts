@@ -267,3 +267,40 @@ export async function loadBusyPage(page: Page, options: { selection?: boolean } 
     await expect(page.getByTestId('selection-bar')).toBeVisible();
   }
 }
+
+/**
+ * The whole-song panel (SPEC-v1.4.md 3) in the states that look different, on the busy page, at each width: open with a cut
+ * inside the options (Use disabled, "Remove the cut at ... first"), with the loops it would replace and the in-page
+ * confirmation showing, and finally the whole-song loop it adds (its label and its Plays field). It changes the page as it
+ * goes (it removes the cut, then replaces the loops), so run it last. Returns the problems.
+ */
+export async function auditWholeSong(page: Page, what: string, widths: readonly number[]): Promise<string[]> {
+  const problems: string[] = [];
+  const at = async (state: string): Promise<void> => {
+    for (const width of widths) {
+      await page.setViewportSize({ width, height: 800 });
+      await settle(page);
+      problems.push(...(await auditPage(page, `${what} ${width}px, ${state}`)));
+    }
+  };
+  await page.setViewportSize({ width: 1100, height: 800 });
+  const panel = page.getByTestId('whole-song-panel');
+  if (!(await panel.isVisible())) await page.getByTestId('whole-song').click();
+  await expect(panel).toBeVisible();
+  const first = page.getByTestId('whole-song-option').first();
+  await expect(first).toBeVisible();
+  // the busy page has a cut at 40 s, inside every option
+  await expect(first.getByTestId('whole-song-conflict')).toContainText('Remove the cut at');
+  await expect(first.getByTestId('whole-song-use')).toBeDisabled();
+  await at('whole-song panel, blocked by a cut');
+  // without the cut the option replaces the page's two loops: ask first
+  await page.getByTestId('remove-cut').first().click();
+  await expect(first.getByTestId('whole-song-conflict')).toContainText('This replaces Loop 1 and Loop 2');
+  await first.getByTestId('whole-song-use').click();
+  await expect(first.getByTestId('whole-song-confirm')).toBeVisible();
+  await at('whole-song panel, asking to replace loops');
+  await first.getByTestId('whole-song-confirm').click();
+  await expect(page.getByTestId('whole-song-tag')).toBeVisible();
+  await at('whole-song panel and a whole-song loop');
+  return problems;
+}

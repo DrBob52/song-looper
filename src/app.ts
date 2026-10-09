@@ -44,6 +44,7 @@ import {
   fitSpan,
   freeGaps,
   isSmooth,
+  isWholeSong,
   neighbourBounds,
   newCutId,
   newRegionId,
@@ -52,6 +53,7 @@ import {
   sortRegions,
   undoSmoothing,
   withSeamPlan,
+  wholeSongConflicts,
 } from './plan';
 import { AnalysisControls } from './ui/analysisControls';
 import { CutsPanel } from './ui/cutsPanel';
@@ -268,6 +270,12 @@ export class App {
       onHover: (id) => {
         const r = id ? this.store.get().regions.find((x) => x.id === id) : undefined;
         this.waveform?.setHighlight(r ? { start: r.start, end: r.end } : null);
+      },
+      onWholeSongAudition: (i) => void this.auditionWholeSong(i),
+      onWholeSongUse: (i) => this.useWholeSong(i),
+      onWholeSongHover: (i) => {
+        const o = i === null ? undefined : this.store.get().analysis?.wholeSong[i];
+        this.waveform?.setHighlight(o ? { start: o.start, end: o.end } : null);
       },
     });
     // the selection bar under the waveform (SPEC-v1.3.md 7.2): typed times, length, Add as loop / Cut / Clear
@@ -497,6 +505,23 @@ export class App {
           const report = s.seams[r.id];
           return report && seamKey(report) === seamKey(r) ? report.bridge : null;
         },
+        wholeSongOf: (r) => isWholeSong(r, s.song?.duration ?? 0),
+      });
+    }
+    if (
+      regionsChanged ||
+      cutsChanged ||
+      s.analysis !== prev.analysis ||
+      s.analysisState !== prev.analysisState ||
+      s.song !== prev.song
+    ) {
+      this.regionsPanel.updateWholeSong({
+        analysis: s.analysis,
+        running: s.analysisState === 'running',
+        failed: s.analysisState === 'error',
+        regions: s.regions,
+        cuts: s.cuts,
+        duration: s.song?.duration ?? 0,
       });
     }
     if (regionsChanged || cutsChanged || s.analysis !== prev.analysis || s.analysisState !== prev.analysisState) this.scheduleSeamReports();
@@ -1694,6 +1719,50 @@ export class App {
     const c = this.store.get().analysis?.candidates[index];
     if (!c) return;
     this.addLoop({ start: c.start, end: c.end }, { score: c.score });
+  }
+
+  // ---- loop the whole song (SPEC-v1.4.md 3) --------------------------------------
+
+  /** Hear the jump of a whole-song option: 4 s before the end point, then 4 s from the start point (the normal seam audition). */
+  async auditionWholeSong(index: number): Promise<void> {
+    const o = this.store.get().analysis?.wholeSong[index];
+    if (!o) return;
+    const key = `whole-song-${index}`;
+    const seam = await this.planFor(key, o);
+    await this.auditionSpan(key, { start: o.start, end: o.end, ...(seam ? { seam } : {}) });
+  }
+
+  /**
+   * Add a whole-song option as a loop with 2 plays, labelled Whole song. Loops inside its span are removed (the panel has
+   * asked the user first); a cut inside it refuses the option. Returns the new loop's id, or null when refused.
+   */
+  useWholeSong(index: number): string | null {
+    const { song, analysis, regions, cuts } = this.store.get();
+    const o = analysis?.wholeSong[index];
+    if (!song || !o) return null;
+    const conflicts = wholeSongConflicts(o, regions, cuts);
+    if (conflicts.cuts.length > 0) {
+      this.notify(
+        `${conflicts.cuts.length === 1 ? 'A cut is' : 'Cuts are'} inside this option. Remove ${conflicts.cuts.length === 1 ? 'it' : 'them'} first.`,
+      );
+      return null;
+    }
+    const gone = new Set(conflicts.loops.map((l) => l.region.id));
+    const kept = regions.filter((r) => !gone.has(r.id));
+    if (this.store.get().previewingId !== null && gone.has(this.store.get().previewingId!)) this.stopAux();
+    const id = newRegionId();
+    const region: LoopRegion = {
+      id,
+      start: o.start,
+      end: o.end,
+      repeats: 2,
+      color: nextColor(kept),
+      snapToBars: true,
+      score: o.score,
+      wholeSong: true,
+    };
+    this.commitRegions([...kept, region], { selectedId: id, selection: null });
+    return id;
   }
 
   /** Hear a span looping, rendered exactly as the export would (same seam, bridge and crossfade). Toggles. */

@@ -1,7 +1,7 @@
 import { expect, test } from './fixtures';
 import type { Page } from '@playwright/test';
 import { SKINS } from '../../src/ui/skins';
-import { auditLoopDialog, auditPage, loadBusyPage, settle } from './overlap';
+import { auditLoopDialog, auditPage, auditWholeSong, loadBusyPage, settle } from './overlap';
 
 // SPEC-v1.3.md 5.3, "Fonts blocked": every skin still renders with its fallback fonts when the Google Fonts hosts cannot
 // be reached: no overlap, nothing sticking out, no horizontal scroll, no errors, and playback keeps working.
@@ -74,6 +74,9 @@ for (const skin of SKINS) {
         await settle(page);
         problems.push(...(await auditLoopDialog(page, `${skin.id} ${mode} ${width}px, fonts blocked, Export loop dialog`)));
       }
+
+      // and Loop the whole song (SPEC-v1.4.md 3): its panel, messages, confirmation and the loop it adds
+      problems.push(...(await auditWholeSong(page, `${skin.id} ${mode}, fonts blocked`, [320, 1100, 2560])));
 
       // and it still plays
       await page.setViewportSize({ width: 1100, height: 800 });
