@@ -761,3 +761,31 @@
     flex: 1 1 100%;
   }
 }
+
+/* Loop the whole song (SPEC-v1.4.md 3): a rounded glass panel with an accent edge, small display-face option names */
+:root[data-skin='space'] .whole-panel {
+  border-radius: 14px;
+  border-left-width: 1px;
+  border-left-color: var(--accent-strong);
+  background: var(--panel-2);
+}
+
+:root[data-skin='space'] .whole-name {
+  font-stretch: 100%;
+  font-weight: 400;
+  font-size: 0.8rem;
+}
+
+:root[data-skin='space'] .whole-name::before {
+  background: var(--accent-strong);
+  box-shadow: 0 0 6px var(--accent-strong);
+}
+
+:root[data-skin='space'] .whole-tag {
+  font-stretch: 100%;
+  font-weight: 400;
+  font-size: 0.62rem;
+  letter-spacing: 0.1em;
+  border-width: 1px;
+  border-color: var(--accent-strong);
+}

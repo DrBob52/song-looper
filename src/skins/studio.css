@@ -785,3 +785,40 @@
     padding: 2px 4px 0;
   }
 }
+
+/* Loop the whole song (SPEC-v1.4.md 3): the panel is an inset display, its option names and the loop's label in the LCD face */
+:root[data-skin='studio'] .whole-panel {
+  border-radius: 3px;
+  border-left-color: var(--accent);
+  background: color-mix(in srgb, var(--panel-2) 55%, var(--paper));
+  box-shadow: inset 0 1px 3px rgba(0, 0, 0, 0.45);
+}
+
+:root[data-skin='studio'] .whole-name {
+  font-family: var(--font-lcd);
+  font-stretch: 100%;
+  font-weight: 400;
+  font-size: 1.3rem;
+  line-height: 1;
+  letter-spacing: 0.02em;
+}
+
+:root[data-skin='studio'] .whole-name::before {
+  border-radius: 1px;
+  background: var(--accent);
+}
+
+:root[data-skin='studio'] .whole-option:nth-child(even) {
+  background: transparent;
+}
+
+:root[data-skin='studio'] .whole-tag {
+  font-family: var(--font-lcd);
+  font-stretch: 100%;
+  font-weight: 400;
+  font-size: 1.05rem;
+  line-height: 1.1;
+  letter-spacing: 0.04em;
+  border-radius: 3px;
+  border-color: var(--accent);
+}

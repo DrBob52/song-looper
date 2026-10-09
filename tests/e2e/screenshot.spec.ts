@@ -2,10 +2,12 @@ import { mkdirSync } from 'node:fs';
 import { expect, test } from './fixtures';
 import type { Page } from '@playwright/test';
 import { SKINS } from '../../src/ui/skins';
+import { appState, loadFixture, makeChordFixture, waitForAnalysis } from './helpers';
 import { loadBusyPage, settle } from './overlap';
 import { fontsDir, loadedFamilies, useRealFonts } from './realFonts';
 
 // Regenerates the README pictures: SCREENSHOT=1 npx playwright test screenshot
+//   docs/whole-song.png and docs/whole-song-phone-dark.png: the Loop the whole song panel (SPEC-v1.4.md);
 //   docs/screenshot.png (light) and docs/screenshot-dark.png: desktop; docs/screenshot-phone.png and
 //   docs/screenshot-phone-dark.png: 380 px wide; docs/themes/<skin>-<mode>-<wide|phone>.png: every look in every mode
 //   it has (Studio hardware and Night club are dark whatever the host says, so they have a dark picture only).
@@ -123,4 +125,44 @@ for (const skin of SKINS) {
       await phone.close();
     });
   }
+}
+
+// Loop the whole song (SPEC-v1.4.md 3): the panel asking to replace two loops, on a song with an intro, a body and an outro
+for (const [name, width, scheme] of [
+  ['whole-song', 820, 'light'],
+  ['whole-song-phone-dark', 380, 'dark'],
+] as const) {
+  test(`take the ${name} screenshot`, async ({ browser }) => {
+    const context = await browser.newContext({ viewport: { width, height: 900 }, colorScheme: scheme, deviceScaleFactor: width < 500 ? 2 : 1 });
+    await useRealFonts(context);
+    const page = await context.newPage();
+    const fixture = await makeChordFixture(
+      {
+        progressions: { I: 'E B C#m A E B C#m A', A: 'C G Am F', B: 'Dm Em F G', C: 'Am F C G', O: 'Ab Fm Db Eb' },
+        structure: 'IABABCAO',
+        timbre: { I: 'sine', O: 'square' },
+        hats: { A: true, B: true, C: true },
+      },
+      'intro-body-outro.wav',
+    );
+    await loadFixture(page, fixture);
+    await waitForAnalysis(page);
+    const [top] = await appState<{ start: number }[]>(page, 's.analysis.wholeSong');
+    for (const [a, b] of [[2, 10], [16, 24]] as const) {
+      await page.evaluate(([x, y]) => (window as unknown as { songLooper: { addLoop(s: object): unknown } }).songLooper.addLoop({ start: x, end: y }), [top!.start + a, top!.start + b]);
+    }
+    await expect(page.locator('[data-testid=regions] li')).toHaveCount(2);
+    await page.getByTestId('whole-song').click();
+    await page.getByTestId('whole-song-option').first().getByTestId('whole-song-use').click();
+    await expect(page.getByTestId('whole-song-confirm')).toBeVisible();
+    // a picture of the card: the turntable bar floats over the page, so it is left out
+    await page.addStyleTag({ content: '.transport { display: none !important; }' });
+    await page.mouse.move(2, 2);
+    await settle(page);
+    await page.waitForTimeout(500);
+    if (fontsDir()) expect((await loadedFamilies(page)).length, 'the real fonts were loaded').toBeGreaterThan(0);
+    mkdirSync('docs', { recursive: true });
+    await page.locator('section[aria-label="Loop regions"]').screenshot({ path: `docs/${name}.png`, animations: 'disabled' });
+    await context.close();
+  });
 }

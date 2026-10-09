@@ -617,3 +617,34 @@
 :root[data-skin='pro'] .progress .fill {
   border-radius: 99px;
 }
+
+/* Loop the whole song (SPEC-v1.4.md 3): a hairline panel with no stripe, mono option names, a quiet pill on the loop */
+:root[data-skin='pro'] .whole-panel {
+  border-radius: 8px;
+  border-left-width: 1px;
+  border-left-color: var(--rule);
+  background: var(--panel-2);
+}
+
+:root[data-skin='pro'] .whole-name {
+  font-family: var(--font-mono);
+  font-stretch: 100%;
+  font-weight: 500;
+  text-transform: none;
+  letter-spacing: 0;
+  font-size: 0.9rem;
+}
+
+:root[data-skin='pro'] .whole-name::before {
+  background: var(--accent-strong);
+}
+
+:root[data-skin='pro'] .whole-tag {
+  font-family: var(--font-mono);
+  font-stretch: 100%;
+  font-weight: 500;
+  font-size: 0.72rem;
+  letter-spacing: 0.04em;
+  border-width: 1px;
+  border-radius: 6px;
+}

@@ -131,6 +131,10 @@ export function checkSkin(spec: SkinSpec): Row[] {
     for (const fg of ['--ink', '--ink-soft', '--ok-text', '--warn-text', '--bad-text']) {
       for (const bg of ['--sleeve', '--paper']) add(fg, bg);
     }
+    // the whole-song panel (SPEC-v1.4.md 3) sits on the looks' second panel colour in some looks: the same texts on it
+    if (tokens['--panel-2'] !== undefined) {
+      for (const fg of ['--ink', '--ink-soft', '--warn-text', '--bad-text']) add(fg, '--panel-2');
+    }
     // the accent is text only inside the cards (the track numbers, the arrow between the lengths)
     add('--label-red', '--sleeve');
     add('--on-red', '--label-red');

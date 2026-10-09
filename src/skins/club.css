@@ -668,3 +668,34 @@
     flex: 1 1 100%;
   }
 }
+
+/* Loop the whole song (SPEC-v1.4.md 3): a neon-edged panel, a magenta mark on each option, a glowing label on the loop */
+:root[data-skin='club'] .whole-panel {
+  border-radius: 12px;
+  border-left-color: var(--magenta);
+  box-shadow: 0 0 18px -9px var(--magenta);
+}
+
+:root[data-skin='club'] .whole-name {
+  font-stretch: 100%;
+  font-weight: 800;
+  font-size: 0.9rem;
+}
+
+:root[data-skin='club'] .whole-name::before {
+  background: var(--magenta);
+  box-shadow: 0 0 8px var(--magenta);
+}
+
+:root[data-skin='club'] .whole-option {
+  border-top-color: rgba(255, 47, 185, 0.22);
+}
+
+:root[data-skin='club'] .whole-tag {
+  font-stretch: 100%;
+  font-weight: 800;
+  font-size: 0.68rem;
+  border-color: var(--magenta);
+  background: color-mix(in srgb, var(--magenta) 10%, transparent);
+  box-shadow: 0 0 10px -3px var(--magenta);
+}

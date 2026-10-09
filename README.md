@@ -118,6 +118,64 @@ song with dozens of suggestions no longer pushes Cuts, Ending and Length down th
 kept across visits in `localStorage` (`song-looper-suggestions-open`, try/catch like the look; with storage blocked the card is
 open and the toggle still works). Preview, Audition seam, Add and Show the whole side behave as before.
 
+### Loop the whole song
+
+The **↻ Whole song** button next to **+ Add loop** ties a song's end back to its beginning, so the end of play 1 runs into
+the start of play 2 and each play is almost the full song:
+
+```
+[intro] [song body] ↩ [song body] ↩ ... [song body] [outro]
+  play 1 begins at 0:00          the last play runs on to the real ending
+```
+
+It opens a panel inside Your loops with up to three options, best first:
+
+```
+Option 1 ★★★★☆  plays 0:15.945 → 1:04.034  keeps 66%
+  skips the first 0:15.9 and the last 0:08.5 of each repeat
+  Chords lead back cleanly, starts on a section boundary, keeps 66% of the song
+  [Audition jump]  [Use this]
+```
+
+| Light | Phone, dark |
+|---|---|
+| ![Loop the whole song, light](docs/whole-song.png) | ![Loop the whole song on a phone, dark](docs/whole-song-phone-dark.png) |
+
+*A synthetic song with an 8-bar intro, the body A B A B C A and a 4-bar outro, and two loops inside the first option: it
+says `This replaces Loop 1 and Loop 2` and, after Use this, asks Replace / Keep them in the panel.*
+
+The loop starts just after the intro and ends just before the outro (both on bar lines), so the jump goes from near the end
+of the song back to near its start at a point where the beat position, the chord change and the energy match.
+**Audition jump** plays 4 s before the end point and then 4 s from the start point through the normal seam code (the same
+as Audition seam, so the smoothed seam is what you hear). **Use this** adds the option as an ordinary loop with **2 plays**,
+labelled **Whole song** on its card, and its repeat field reads **Plays** (each repeat is a full play; the card goes back to
+Repeats and loses the label if you shorten the loop under 60% of the song). From then on typed times, nudges, Smooth seam,
+Bridge, Export loop, cuts outside the loop, the ending and the target length (make it 30 minutes: the plays are solved)
+all work as they do for any loop.
+
+- **Other loops can't overlap it.** An option that has loops inside it says `This replaces Loop 1 and Loop 2`, and Use this
+  asks in the panel (Replace / Keep them; no browser dialog) before it removes them.
+- **Cuts inside it are refused**, as everywhere: the option says `Remove the cut at 1:40.000 first` and Use this is disabled
+  until the cut is gone. Cuts outside it are fine.
+- **No options** (`The song is too short to loop as a whole`; `No steady beat found. Drag a selection from just after the
+  intro to just before the outro and press L.`; or, for a song with a beat where no pair of bar lines gave a natural jump,
+  `No way of looping this whole song sounded natural.` and the same hint): the panel says why.
+
+The search (`src/analysis/wholeSong.ts`, `Analysis.wholeSong`) scores every pair of bar starts `(a, b)` where `a` is in the
+first `startWindow` of the song and `b` in the last `endWindow` (each the smaller of 30% of the song and 90 s), `b - a` is a
+whole number of bars, and `(b - a) / duration` is at least 60%:
+
+```
+score = 0.45 x seam + 0.25 x structure + 0.15 x energy + 0.15 x coverage
+```
+
+The seam, the structure term (1 when both ends are on section boundaries, 0.5 for one) and the energy term are the ones the
+suggestions use (`seamOfLoop`, `structureScore`, `energyContinuity`: the context match and the harmony of the jump from the
+last beat before `b` back to the beat at `a`); coverage is the share of the song each play keeps. Two options may not be
+within 2 bars of each other at both edges, and the top 3 are kept. Every weight and window is in `config.ts` under
+`wholeSong`. The search costs a few tens of milliseconds on top of a five-minute song's analysis (about 1.5 s in total here,
+against the 5 s budget).
+
 ### Export a loop
 
 Every loop card has an **Export loop** button that saves that loop as an audio file of its own. The dialog is the export
@@ -234,7 +292,7 @@ npm run demo-song    # writes tests/fixtures/demo-song.generated.wav (git-ignore
 | `BIG_EXPORT_SECONDS=14400 npx playwright test big-export` | Opt-in: export a very long extended song through the real UI and check the WAV header against the file on disk (`BIG_EXPORT_BITS=16\|24\|32`, `BIG_EXPORT_ARTIFACT=1` to save it zipped as a claude.ai artifact would) |
 | `npm run contrast` | WCAG AA contrast of every look's text colours in every mode (also a unit test); exits non-zero on a failure |
 | `npx tsx scripts/mirror-fonts.ts <folder>` | Download every look's Google Fonts stylesheet and font files into a folder, for screenshots and the real-fonts check on a machine whose browser can't reach Google Fonts |
-| `SCREENSHOT=1 npx playwright test screenshot` | Regenerate the pictures in `docs/`: the four README screenshots and `docs/themes/` (every look, every mode, wide and phone) |
+| `SCREENSHOT=1 npx playwright test screenshot` | Regenerate the pictures in `docs/`: the four README screenshots, `docs/whole-song*.png` and `docs/themes/` (every look, every mode, wide and phone) |
 | `FONTS_DIR=<folder> npx playwright test layout-fonts` | Run the overlap guard in every look with the real fonts (skipped without `FONTS_DIR`) |
 
 ## Tests
@@ -298,7 +356,17 @@ npm run demo-song    # writes tests/fixtures/demo-song.generated.wav (git-ignore
   other characters a file system refuses, 1 repeat loop-ready and 4 repeats with the durations and the first pass equal
   to the 1-repeat file, the loop-ready join against a loop whose edges do not match, the Smooth seam plan's rotated span
   with a bridge left out, the repeats' validation, estimate and WAV cap, baked speed and pitch, Cancel, and a zip inside
-  an artifact).
+  an artifact). v1.4 added: the whole-song search on a synthetic song with an 8-bar intro, the body A B A B C A and a 4-bar
+  outro whose chords differ from the intro's (the top option starts at the end of the intro and ends at the start of the
+  outro, within a bar; every option is bar-aligned, inside the search windows and keeps at least 60%; best first, no two
+  within 2 bars at both edges; nothing for a song under 20 s, for silence or without a steady beat; a five-minute song,
+  also at a fast tempo, stays under the 5 s budget with the search in it), a whole-song loop with N plays rendering as
+  `D + (N - 1) x (end - start)` with `renderRange` equal to the full render, the conflict rules and their texts; and in the
+  browser the panel (one to three options with times, skipped time and reason, the hover highlight, Audition jump playing),
+  Use this (the Whole song label, 2 plays, the Plays field, the extended length and the exported WAV's duration, typed times,
+  a 30-minute target), the in-page replace confirmation with no browser dialog, a cut inside an option disabling it, a cut
+  outside leaving it alone, and the messages for a short song and a song with no steady beat. The layout guard also runs the
+  panel in every look (blocked by a cut, asking to replace loops, and with the loop it added).
 
 Playwright is pinned to 1.56.x so that its Chromium revision matches the browser pre-installed in this
 environment under `PLAYWRIGHT_BROWSERS_PATH`. To use another browser, set `CHROMIUM_PATH` to its executable.
@@ -474,7 +542,7 @@ its timestamps) at 380, 1100 and 1600 px. The fonts-blocked run (`skins-fonts.sp
 Google Fonts hosts aborted) and the real-fonts run (`layout-fonts.spec.ts`, with `FONTS_DIR`) add 320 px and 2560 px, and
 the real-fonts run 768 px too. The guard finds text that overlaps text or a control, anything that sticks out of its card
 or the window, a text field whose value is clipped, a decoration sitting on text, and a bar that covers a card.
-Intentional overlaps (the sleeve's record, the timeline playhead) are listed with `data-overlap-ok`. Export loop's dialog is
+The whole-song panel (SPEC-v1.4.md) is audited in three states at the end of each run: open with a cut inside its options, asking to replace loops, and with the loop it adds (at 380, 1100 and 1600 px in the loaded run, 320, 1100 and 2560 px with fonts blocked, 320, 768 and 2560 px with the real fonts). Intentional overlaps (the sleeve's record, the timeline playhead) are listed with `data-overlap-ok`. Export loop's dialog is
 checked too (with a bridged loop, so its note shows): at 380, 1100 and 1600 px in the loaded run, at 320 and 1100 px in the
 fonts-blocked run and at 320, 380 and 1100 px in the real-fonts run. The dialog is a container like a card (the browser makes
 an open modal `position: fixed`, so the guard does not count it as a decoration), and the file-name field is marked
@@ -520,12 +588,12 @@ the fonts-blocked tests check that for every look (no overlap, no errors, playba
 **Contrast.** `npm run contrast` (and a unit test) reads the tokens of every look and mode from the CSS and checks WCAG AA
 for the text colours (ink, soft ink, the OK, warning and error text, the red label text) on the panel and on the page,
 the text on the red label, on the sticker and on each loop's colour, and the timestamps at a selection's edges on their tag (with
-the tag's outline against it at 3:1): 160 pairs (152 of text), none under its minimum. Where a look's
+the tag's outline against it at 3:1), and the same texts on the second panel colour that the whole-song panel uses in some looks: 184 pairs (176 of text), none under its minimum. Where a look's
 specified accent was a hair under AA with white text (Pro's blue 4.4987:1, Space's orange 3.4:1 and teal 4.07:1) the text
 and solid buttons use a slightly darker `--accent-strong`, and the specified colour stays for the rings, the orbit and
 the first loop. The lowest pair of each look is
-4.52:1 (Vinyl dark), 4.73:1 (Vinyl light), 5.23:1 (Studio), 5.75:1 (Club), 4.54:1 (Pro light), 6.85:1 (Pro dark), 4.79:1
-(Space light) and 6.47:1 (Space dark).
+4.52:1 (Vinyl dark), 4.73:1 (Vinyl light), 4.96:1 (Studio), 5.75:1 (Club), 4.54:1 (Pro light), 6.27:1 (Pro dark), 4.79:1
+(Space light) and 5.94:1 (Space dark).
 
 **Motion.** Each look has one signature motion (the record, the LED chase, the beat pulse, the orbit dot) and all of them
 stop with `prefers-reduced-motion`.
@@ -563,13 +631,15 @@ src/
   ui/        dropzone, waveform, suggestionsPanel, regionsPanel, cutsPanel, endingPanel, edgeEditor, lengthPanel,
              timelineStrip, transport, exportDialog (also Export loop), analysisControls, seamText, numberField, holdRepeat,
              record, loopColors, layout (the two-column arrangement), skins, skinPicker (the looks),
-             selectionBar, selectionLabels (where the timestamps at a selection's edges go)
+             selectionBar, selectionLabels (where the timestamps at a selection's edges go),
+             wholeSongPanel (Loop the whole song)
   skins/     pro.css studio.css club.css space.css   (Vinyl's tokens are at the top of style.css)
   audio/     decode (+ sniff), player, render (renderRange), preview, stream, chunkSource, target, stretch,
              wav, zip, exportPieces, loopExport (one loop as a file), blobAssembler, save, renderClient/worker/protocol
   util/      time, format, store, filename
   analysis/  stft onset tempo beats bars features ssm sections candidates pipeline config worker client
              harmony seam smooth nearby bridge bridgePlan   (seams, see "How seams are smoothed")
+             wholeSong   (the whole-song loop search, see "Loop the whole song")
   label/     provider.ts   (LabelProvider interface, no-op default)
 tests/       unit/  e2e/  fixtures/
 scripts/     make-demo-song.ts  skin-contrast.ts  mirror-fonts.ts
